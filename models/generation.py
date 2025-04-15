@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn import MultiheadAttention
 
 class generator(nn.Module):
     # initializers
@@ -32,6 +33,7 @@ class generator(nn.Module):
         self.conv2_2col = nn.Conv2d(64, 64, kernel_size=3, padding=1)
         self.maxpool2col = nn.MaxPool2d(kernel_size=2)
         self.conv3_1col = nn.Conv2d(64, 256, kernel_size=3, stride=1, padding=1)
+        self.self_att = MultiheadAttention(embed_dim=256, num_heads=4, batch_first=True)
 
     # weight_init
     def weight_init(self, mean, std):
@@ -68,7 +70,17 @@ class generator(nn.Module):
         x = torch.cat([x, y, yc], 1)
         x = F.relu(self.deconv2_bn(self.deconv2(x)))
         # print(x.shape) [bs, 256, 16, 16]
-        x = self.self_att(x)
+
+        # Reshape x: [B, C, H, W] → [B, H*W, C]
+        B, C, H, W = x.shape
+        x_flat = x.view(B, C, -1).permute(0, 2, 1)  # [B, H*W, C]
+
+        # Self-Attention anwenden
+        x_attended, _ = self.self_att(x_flat, x_flat, x_flat)
+
+        # Zurück in Bildformat: [B, H*W, C] → [B, C, H, W]
+        x = x_attended.permute(0, 2, 1).view(B, C, H, W)
+
         x = F.tanh(self.deconv4(x))
         return x
 
@@ -95,7 +107,10 @@ class Discriminator(nn.Module):
 
         # Output layers
         self.adv_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, 1), nn.Sigmoid())
-        self.aux_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, 10), nn.Softmax())
+        self.aux_layer = nn.Sequential(
+            nn.Linear(128 * ds_size ** 2, 10),
+            nn.Softmax(dim=1)  # ✅ Warnung behoben
+        )
 
     def forward(self, img):
         out = self.conv_blocks(img)
