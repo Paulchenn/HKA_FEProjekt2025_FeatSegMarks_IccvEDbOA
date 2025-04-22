@@ -17,6 +17,11 @@ import itertools
 
 torch.autograd.set_detect_anomaly(True)
 
+# Modes for Debugging
+debug_mode = False
+debugIterations_strt = 386  # If Debug Mode is on start at this Iteration
+debugIterations_amount = 6     # If Debug Mode is on only do this amount of Iterations
+
 def get_edge(images, sigma=1.0, high_threshold=0.3, low_threshold=0.2):
     # median = kornia.filters.MedianBlur((3,3))
     # for i in range(3):
@@ -163,7 +168,11 @@ cifar10_test = datasets.CIFAR10(
     root='./src/cifar10', train=False, download=True, transform=transform_test
 )
 
+# Take cuda if availabe (NVIDIA) if not then cpu
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Set best accuracy to 0 to be sure that first accuracy is better
+best_acc = 0
 
 # --- Trainingsparameter ---
 batch_size = 128         # Anzahl der Bilder pro Trainingsbatch
@@ -179,7 +188,7 @@ netG = generation.generator(128)   # Generator-Netzwerk mit Eingabegröße 128 (
 netD = generation.Discriminator()  # Diskriminator zur Unterscheidung von real/fake Bildern
 cls = ResNet18(BasicBlock, num_classes=10)            # Klassifikator (hier: ResNet-18)
 
-# Netzwerke auf GPU verschieben
+# Netzwerke auf GPU/CPU verschieben
 netG = netG.to(device)
 netD = netD.to(device)
 cls = cls.to(device)
@@ -197,7 +206,7 @@ optimizerC = optim.Adam(
 
 # --- DataLoader für Batch-Training ---
 train_loader = DataLoader(
-    dataset=cifar10_train, batch_size=batch_size, shuffle=True
+    dataset=cifar10_train, batch_size=batch_size, shuffle=True#, drop_last=True
 )  # Trainingsdaten gemischt in Batches
 test_loader = DataLoader(
     dataset=cifar10_test, batch_size=64
@@ -242,7 +251,7 @@ for i, (img, label) in enumerate(test_loader):
     blur_img = re32(blur_img)  # Skaliert das Bild auf 32x32 zurück (wieder die CIFAR-10 Originalgröße)
 
     # --- Schleifensteuerung ---
-    if i > 0:  # Hier wird die Schleife nach dem ersten Batch gestoppt (vermutlich zu Debugging-Zwecken)
+    if i > 0:  # Hier wird die Schleife nach dem ersten Batch gestoppt
         break
 
 # --- Zuordnung der bearbeiteten Bilder zu Variablen für spätere Nutzung ---
@@ -263,6 +272,9 @@ for epoch in range(epochs):
 
     # Schleife für das Training über den gesamten Datensatz
     for i, (img, label) in enumerate(train_loader):
+        # For Debugging
+        if debug_mode and i < debugIterations_strt:
+            continue
 
         img = img.to(device)  # Überträgt das Bild auf die GPU
         label = label.to(device)  # Überträgt das Label auf die GPU
@@ -347,13 +359,23 @@ for epoch in range(epochs):
         total_loss.backward()  # Gradienten berechnen
         optimizerG.step()  # Optimierer für den Generator Schritt ausführen
 
-        # Alle 200 Iterationen den aktuellen Verlust ausgeben
-        if i % 200 == 0:
-            print('Epoch[', epoch + 1, '/', epochs, '][', i, '/', len(train_loader), ']: TOTAL_LOSS', total_loss.item())
+        # Alle x Iterationen den aktuellen Verlust ausgeben
+        if i % 5 == 0:
+            print('Epoch[', epoch + 1, '/', epochs, '][', i + 1, '/', len(train_loader), ']: TOTAL_LOSS', total_loss.item())
+
+        # For debuging (Training of even one Epoch takes very long)
+        if debug_mode and i >= debugIterations_strt+debugIterations_amount:
+            break
 
     # Speichern von Ergebnissen und Modellen nach jeder Epoche
-    fixed_p = './Result/cifar_gan/visualization' + str(epoch) + '.png'
-    show_result(epoch, path=fixed_p)  # Zeigt das Ergebnis der aktuellen Epoche an
+    path2save = './Result/cifar_gan/visualization'
+    fixed_p = path2save + str(epoch) + '.png'
+    if not os.path.exists(path2save):
+        os.makedirs(path2save)
+    try:
+        show_result(epoch, path=fixed_p)  # Zeigt das Ergebnis der aktuellen Epoche an
+    except IndexError as e:
+        print(f"IndexError: {e}")
     torch.save(netG.state_dict(), './Result/cifar_gan/tuned_G_' + str(epoch) + '.pth')  # Speichert den Generator
     torch.save(netD.state_dict(), './Result/cifar_gan/tuned_D_' + str(epoch) + '.pth')  # Speichert den Diskriminator
 
@@ -367,12 +389,17 @@ for epoch in range(epochs):
 
     # Testphase
     for i, (img, label) in enumerate(test_loader):
+        # For Debugging
+        if debug_mode and i < debugIterations_strt:
+            continue
+
         img = img.to(device)  # Bild auf GPU verschieben
         label = label.to(device)  # Label auf GPU verschieben
 
         # Verarbeitung der Testbilder ähnlich wie im Training
         generated1 = get_edge(img, sigma=1.0, high_threshold=0.3, low_threshold=0.2)
-        generated2 = get_info(img)
+        #generated2 = get_info(img)
+        generated2 = get_info(img, img.shape[0])
         generated1 = torch.where(generated1 < 0, 0., 1.)
         generated2 *= -1
         generated2 = torch.where(generated2 < 0, 0., 1.)
@@ -389,10 +416,14 @@ for epoch in range(epochs):
         G_result = netG(z_, combined, blur_img)
 
         # Klassifikationsnetzwerk bewertet das generierte Bild
-        output = resnet(G_result)
+        output = cls(G_result)
         prediction = torch.argmax(output, 1)
         correct += (prediction == label).sum().float()  # Zählt die korrekten Vorhersagen
-        total += len(label)  # Zählt die Gesamtanzahl der Testbilder
+        total += len(label)  # Zählt die Gesamtanzahl der Testbilder#
+
+        # For debuging (Training of even one Epoch takes very long)
+        if debug_mode and i >= debugIterations_strt+debugIterations_amount:
+            break
 
     acc = (correct / total).cpu().detach().data.numpy()  # Berechnet die Genauigkeit
     print('Epoch: ', epoch + 1, ' test accuracy: ', acc)
@@ -401,7 +432,7 @@ for epoch in range(epochs):
     if acc > best_acc:
         best_acc = acc
         print('Best accuracy: ', acc)
-        torch.save(resnet.state_dict(), './Result/best_cls.pth')  # Speichert das beste Klassifizierungsmodell
+        torch.save(cls.state_dict(), './Result/best_cls.pth')  # Speichert das beste Klassifizierungsmodell
 
 
 
