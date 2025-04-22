@@ -67,7 +67,35 @@ class generator(nn.Module):
         yc = F.relu(self.conv3_1col(bc))
 
         #########################################################
-        x = torch.cat([x, y, yc], 1)
+        try:
+            x = torch.cat([x, y, yc], 1)
+        except RuntimeError as e:
+            print(f"RuntimeError: {e}")
+            print(f"input batch size: {input.shape[0]}")
+            print(f"label batch size: {label.shape[0]}")
+            print(f"bc batch size: {bc.shape[0]}")
+
+            min_batch_size = min(input.shape[0], label.shape[0], bc.shape[0])
+
+            input = input[:min_batch_size]
+            label = label[:min_batch_size]
+            bc = bc[:min_batch_size]
+            
+            print(f"x batch size: {x.shape[0]}, y batch size: {y.shape[0]}, yc batch size: {yc.shape[0]}")
+            
+            min_batch_size = min(x.shape[0], y.shape[0], yc.shape[0])
+
+            x = x[:min_batch_size]
+            y = y[:min_batch_size]
+            yc = yc[:min_batch_size]
+            try:
+                x = torch.cat([x, y, yc], 1)
+            except RuntimeError as e:
+                print(f"Second RuntimeError: {e}")
+                print(f"x shape: {x.shape}")
+                print(f"y shape: {y.shape}")
+                print(f"yc shape: {yc.shape}") 
+                raise e
         x = F.relu(self.deconv2_bn(self.deconv2(x)))
         # print(x.shape) [bs, 256, 16, 16]
 
