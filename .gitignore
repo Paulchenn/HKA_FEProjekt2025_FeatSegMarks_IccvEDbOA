@@ -1,0 +1,6 @@
+Result/
+__pycache__/
+models/__pycache__/
+src/
+utils/__pycache__/
+.DS_Store
