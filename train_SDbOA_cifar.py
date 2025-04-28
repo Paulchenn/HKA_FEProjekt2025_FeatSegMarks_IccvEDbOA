@@ -371,7 +371,7 @@ if __name__ == "__main__":
 
         # Speichern von Ergebnissen und Modellen nach jeder Epoche
         path2save = './Result/cifar_gan/visualization'
-        fixed_p = path2save + str(epoch) + '.png'
+        fixed_p = path2save + '/' + str(epoch) + '.png'
         if not os.path.exists(path2save):
             os.makedirs(path2save)
         try:
