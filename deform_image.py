@@ -73,14 +73,23 @@ def deform_image(
     return out_img
 
 if __name__ == "__main__":
+    # Set the device to GPU if available, otherwise CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Define the image transformations
     re12 = transforms.Resize((12, 12))
     re32 = transforms.Resize((32, 32))
 
+    # Load the generator model
+    # Ensure the path is correct and the model is compatible with your code
     netG = load_generator("./Result/cifar_gan/tuned_G_16.pth", device)
+    # Load the image
+    # Ensure the image path is correct
     img = Image.open("./src/_DSC7815.jpeg").convert("RGB")
 
+    # Resize the image to 32x32
     img = re32(img)
 
+    # Deform the image
     out_img = deform_image(netG, img)
+    # Show the output image
     out_img.show()
