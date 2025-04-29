@@ -18,8 +18,8 @@ import itertools
 torch.autograd.set_detect_anomaly(True)
 
 # Modes for Debugging
-debug_mode = False
-debugIterations_strt = 386  # If Debug Mode is on start at this Iteration
+debug_mode = True
+debugIterations_strt = 0  # If Debug Mode is on start at this Iteration
 debugIterations_amount = 6     # If Debug Mode is on only do this amount of Iterations
 
 def get_edge(images, sigma=1.0, high_threshold=0.3, low_threshold=0.2, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
@@ -208,7 +208,7 @@ if __name__ == "__main__":
 
     # --- DataLoader für Batch-Training ---
     train_loader = DataLoader(
-        dataset=cifar10_train, batch_size=batch_size, shuffle=True#, drop_last=True
+        dataset=cifar10_train, batch_size=batch_size, shuffle=True#, drop_last=Truegit
     )  # Trainingsdaten gemischt in Batches
     test_loader = DataLoader(
         dataset=cifar10_test, batch_size=64
@@ -218,6 +218,10 @@ if __name__ == "__main__":
     L1_loss = nn.L1Loss()                # Absoluter Fehler (z. B. für Rekonstruktion)
     MSE_loss = nn.MSELoss()              # Quadratischer Fehler (z. B. für Bildvergleich)
     CE_loss = nn.CrossEntropyLoss()      # Klassifikationsverlust (für multi-class outputs wie CIFAR-10 Klassen)
+
+    # Initalisierung der Werte für die Abruchbedingung
+    no_improvement_counter = 0
+    patience = 10  # wie viele Epochen ohne Verbesserung bevor Abbruch
 
     for i, (img, label) in enumerate(test_loader):
         img = img.to(device)  # Übertragen der Bilder auf die GPU
@@ -435,7 +439,15 @@ if __name__ == "__main__":
             best_acc = acc
             print('Best accuracy: ', acc)
             torch.save(cls.state_dict(), './Result/best_cls.pth')  # Speichert das beste Klassifizierungsmodell
+            no_improvement_counter = 0  # zurücksetzen, weil Verbesserung
+        else:
+            no_improvement_counter += 1  # keine Verbesserung -> counter erhöhen
 
+        print(f"Improvement counter: [ {no_improvement_counter} / {patience} ]")
+        # Abruchbedingung mit improvement counter
+        if no_improvement_counter >= patience:
+            print(f"Early stopping at epoch {epoch + 1}")
+            break
 
 
 
