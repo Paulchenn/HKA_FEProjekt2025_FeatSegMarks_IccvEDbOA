@@ -1,0 +1,26 @@
+{
+  "device": "cuda",
+  "batch_size": 128,
+  "epochs": 120,
+
+  "learning_rate": {
+    "generator": 0.0001,
+    "discriminator": 0.0001,
+    "classifier": 0.001
+  },
+
+  "patience": 10,
+
+  "debug_mode": true,
+  "debugIterations_strt": 0,
+  "debugIterations_amount": 6,
+
+  "dataset": {
+    "name": "CIFAR10",
+    "path": "./src/cifar10"
+  },
+
+  "generator_input_dim": 128,
+
+  "save_path": "./Result/cifar_gan/"
+}

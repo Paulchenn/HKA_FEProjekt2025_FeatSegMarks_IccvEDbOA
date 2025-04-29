@@ -1,10 +1,10 @@
+import json
 import numpy as np
 import os
 import torch
 from torch import nn, optim
 from torchvision import datasets, transforms
 import torch.nn.functional as F
-
 from torch.utils.data import DataLoader, Dataset
 from matplotlib import pyplot as plt
 from models import resnet, generation
@@ -17,12 +17,23 @@ import itertools
 
 torch.autograd.set_detect_anomaly(True)
 
-# Modes for Debugging
-debug_mode = True
-debugIterations_strt = 0  # If Debug Mode is on start at this Iteration
-debugIterations_amount = 6     # If Debug Mode is on only do this amount of Iterations
+# --- Load config ---
+with open('config/config.json', 'r') as f:
+    config = json.load(f)
 
-def get_edge(images, sigma=1.0, high_threshold=0.3, low_threshold=0.2, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+# --- Load parameters from config ---
+device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
+batch_size = config["batch_size"]
+epochs = config["epochs"]
+patience = config["patience"]
+debug_mode = config["debug_mode"]
+debugIterations_strt = config["debugIterations_strt"]
+debugIterations_amount = config["debugIterations_amount"]
+lr_gen = config["learning_rate"]["generator"]
+lr_disc = config["learning_rate"]["discriminator"]
+lr_cls = config["learning_rate"]["classifier"]
+
+def get_edge(images, sigma=1.0, high_threshold=0.3, low_threshold=0.2, *, device=device):
     # median = kornia.filters.MedianBlur((3,3))
     # for i in range(3):
     #     images = median(images)
@@ -55,7 +66,7 @@ def rgb2Gray_batch(input):
     return input
 
 
-def grid_sample(input, grid, canvas=None, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+def grid_sample(input, grid, canvas=None, *, device=device):
     output = F.grid_sample(input, grid, align_corners=True).to(device)
     if canvas is None:
         return output
@@ -66,7 +77,7 @@ def grid_sample(input, grid, canvas=None, device=torch.device('cuda' if torch.cu
         return padded_output
 
 
-def TPS_Batch(imgs, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+def TPS_Batch(imgs, *, device=device):
     height, width = imgs.shape[3], imgs.shape[2]
     tps_img = []
     for i in range(imgs.shape[0]):
@@ -90,7 +101,7 @@ def TPS_Batch(imgs, device=torch.device('cuda' if torch.cuda.is_available() else
     return tps_img
 
 
-def get_info(input, batch_size, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+def get_info(input, batch_size, *, device=device):
     gray = rgb2Gray_batch(input)
     # gray = input
     mat1 = torch.cat([gray[:, :, 0, :].unsqueeze(2), gray], 2)[:, :, :gray.shape[2], :]
@@ -109,7 +120,7 @@ def get_info(input, batch_size, device=torch.device('cuda' if torch.cuda.is_avai
     return info
 
 
-def show_result(num_epoch, show=False, save=False, path='result.png'):
+def show_result(num_epoch, show=False, save=False, path='result.png', *, device=device):
     zz = torch.randn(64, 100, 1, 1).to(device)
     netG.eval()
     test_images = netG(zz, show_x, bx)
@@ -162,12 +173,12 @@ if __name__ == "__main__":
     # --- CIFAR-10 Datensätze laden ---
     # Trainingsdatensatz: wird beim ersten Mal heruntergeladen und transformiert
     cifar10_train = datasets.CIFAR10(
-        root='./src/cifar10', train=True, download=True, transform=transform_train
+        root=config["dataset"]["path"], train=True, download=True, transform=transform_train
     )
 
     # Testdatensatz: ebenfalls mit den passenden Transformationen
     cifar10_test = datasets.CIFAR10(
-        root='./src/cifar10', train=False, download=True, transform=transform_test
+        root=config["dataset"]["path"], train=False, download=True, transform=transform_test
     )
 
     # Take cuda if availabe (NVIDIA) if not then cpu
@@ -177,9 +188,8 @@ if __name__ == "__main__":
     best_acc = 0
 
     # --- Trainingsparameter ---
-    batch_size = 128         # Anzahl der Bilder pro Trainingsbatch
-    lr = 1e-4                # Lernrate für Generator und Diskriminator
-    epochs = 120             # Anzahl der Trainingsepochen
+    batch_size = config["batch_size"]         # Anzahl der Bilder pro Trainingsbatch
+    epochs = config["epochs"]             # Anzahl der Trainingsepochen
 
     # --- Resize-Operationen (vermutlich für Upsampling/Downsampling) ---
     re12 = transforms.Resize((12, 12))  # Verkleinert Bilder auf 12x12
@@ -196,19 +206,13 @@ if __name__ == "__main__":
     cls = cls.to(device)
 
     # --- Optimizer definieren ---
-    optimizerD = optim.Adam(
-        netD.parameters(), lr=lr, betas=(0., 0.99)
-    )  # Optimizer für Diskriminator (GAN-typische Betas)
-    optimizerG = optim.Adam(
-        netG.parameters(), lr=lr, betas=(0., 0.99)
-    )  # Optimizer für Generator
-    optimizerC = optim.Adam(
-        cls.parameters(), lr=1e-3, betas=(0., 0.99)
-    )  # Optimizer für Klassifikator (mit höherer Lernrate)
+    optimizerD = optim.Adam(netD.parameters(), lr=lr_disc, betas=(0., 0.99))  # Optimizer für Diskriminator (GAN-typische Betas)
+    optimizerG = optim.Adam(netG.parameters(), lr=lr_gen, betas=(0., 0.99))  # Optimizer für Generator
+    optimizerC = optim.Adam(cls.parameters(), lr=lr_cls, betas=(0., 0.99)) # Optimizer für Klassifikator (mit höherer Lernrate)
 
     # --- DataLoader für Batch-Training ---
     train_loader = DataLoader(
-        dataset=cifar10_train, batch_size=batch_size, shuffle=True#, drop_last=Truegit
+        dataset=cifar10_train, batch_size=batch_size, shuffle=True#, drop_last=True
     )  # Trainingsdaten gemischt in Batches
     test_loader = DataLoader(
         dataset=cifar10_test, batch_size=64
@@ -221,7 +225,7 @@ if __name__ == "__main__":
 
     # Initalisierung der Werte für die Abruchbedingung
     no_improvement_counter = 0
-    patience = 10  # wie viele Epochen ohne Verbesserung bevor Abbruch
+    patience = config["patience"]  # wie viele Epochen ohne Verbesserung bevor Abbruch
 
     for i, (img, label) in enumerate(test_loader):
         img = img.to(device)  # Übertragen der Bilder auf die GPU
@@ -273,8 +277,8 @@ if __name__ == "__main__":
 
         # Nach der 60. Epoche wird die Lernrate des Diskriminators und des Generators verringert
         if epoch == 60:
-            optimizerD = optim.Adam(netD.parameters(), lr=lr * 0.1, betas=(0., 0.99))
-            optimizerG = optim.Adam(netG.parameters(), lr=lr * 0.1, betas=(0., 0.99))
+            optimizerD = optim.Adam(netD.parameters(), lr=lr_disc * 0.1, betas=(0., 0.99))
+            optimizerG = optim.Adam(netG.parameters(), lr=lr_gen * 0.1, betas=(0., 0.99))
 
         # Schleife für das Training über den gesamten Datensatz
         for i, (img, label) in enumerate(train_loader):
