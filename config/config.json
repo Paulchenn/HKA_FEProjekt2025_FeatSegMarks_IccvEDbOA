@@ -9,9 +9,9 @@
     "classifier": 0.001
   },
 
-  "patience": 10,
+  "patience": 120,
 
-  "debug_mode": true,
+  "debug_mode": false,
   "debugIterations_strt": 0,
   "debugIterations_amount": 6,
 
