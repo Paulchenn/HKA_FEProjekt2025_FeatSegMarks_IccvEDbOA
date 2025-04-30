@@ -151,6 +151,19 @@ def show_result(num_epoch, show=False, save=False, path='result.png', *, device=
 # --- Alles, was ausgeführt werden soll, wenn du train_SDbOA_cifar.py direkt laufen lässt ---
 if __name__ == "__main__":
 
+    if True:
+        print(f"device: {device}")
+        print(f"batch size: {batch_size}")
+        print(f"epochs: {epochs}")
+        print(f"patience: {patience}")
+        print(f"debug mode: {debug_mode}")
+        if debug_mode:
+            print(f"Start at Iteration (debug): {debugIterations_strt}")
+            print(f"Amount of Iterations (debug): {debugIterations_amount}")
+        print(f"learning rate generator: {lr_gen}")
+        print(f"learning rate discriminator: {lr_disc}")
+        print(f"learning rate classifier: {lr_cls}")
+
     # --- Zusammenfassung ---
     # - Daten werden vorbereitet mit normalen Augmentierungen.
     # - Es handelt sich um ein GAN-Setup: Generator (netG), Diskriminator (netD) und einen Klassifikator (cls), basierend auf ResNet18.
