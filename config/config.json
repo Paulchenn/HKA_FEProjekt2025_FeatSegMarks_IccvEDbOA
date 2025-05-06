@@ -10,6 +10,7 @@
   },
 
   "patience": 120,
+  "min_slope": 0.0005,
 
   "debug_mode": false,
   "debugIterations_strt": 0,
