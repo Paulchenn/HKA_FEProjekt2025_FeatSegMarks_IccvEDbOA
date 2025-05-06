@@ -14,6 +14,7 @@ from skimage.color import rgb2gray
 from tps_grid_gen import TPSGridGen
 from torch.autograd import Variable
 import itertools
+from collections import deque
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -26,12 +27,14 @@ device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
 batch_size = config["batch_size"]
 epochs = config["epochs"]
 patience = config["patience"]
+min_slope = config["min_slope"]
 debug_mode = config["debug_mode"]
 debugIterations_strt = config["debugIterations_strt"]
 debugIterations_amount = config["debugIterations_amount"]
 lr_gen = config["learning_rate"]["generator"]
 lr_disc = config["learning_rate"]["discriminator"]
 lr_cls = config["learning_rate"]["classifier"]
+acc_history = deque(maxlen=patience)
 
 def get_edge(images, sigma=1.0, high_threshold=0.3, low_threshold=0.2, *, device=device):
     # median = kornia.filters.MedianBlur((3,3))
@@ -157,12 +160,13 @@ if __name__ == "__main__":
         print(f"epochs: {epochs}")
         print(f"patience: {patience}")
         print(f"debug mode: {debug_mode}")
-        if debug_mode:
-            print(f"Start at Iteration (debug): {debugIterations_strt}")
-            print(f"Amount of Iterations (debug): {debugIterations_amount}")
         print(f"learning rate generator: {lr_gen}")
         print(f"learning rate discriminator: {lr_disc}")
         print(f"learning rate classifier: {lr_cls}")
+
+        if debug_mode:
+            print(f"Start at Iteration (debug): {debugIterations_strt}")
+            print(f"Amount of Iterations (debug): {debugIterations_amount}")
 
     # --- Zusammenfassung ---
     # - Daten werden vorbereitet mit normalen Augmentierungen.
@@ -451,20 +455,21 @@ if __name__ == "__main__":
         acc = (correct / total).cpu().detach().data.numpy()  # Berechnet die Genauigkeit
         print('Epoch: ', epoch + 1, ' test accuracy: ', acc)
 
-        # Speichert das Modell, wenn die beste Genauigkeit erreicht wurde
+        acc_history.append(acc)
+
+        # Speichern, wenn beste Accuracy
         if acc > best_acc:
             best_acc = acc
             print('Best accuracy: ', acc)
-            torch.save(cls.state_dict(), './Result/best_cls.pth')  # Speichert das beste Klassifizierungsmodell
-            no_improvement_counter = 0  # zurücksetzen, weil Verbesserung
-        else:
-            no_improvement_counter += 1  # keine Verbesserung -> counter erhöhen
+            torch.save(cls.state_dict(), './Result/best_cls.pth')
 
-        print(f"Improvement counter: [ {no_improvement_counter} / {patience} ]")
-        # Abruchbedingung mit improvement counter
-        if no_improvement_counter >= patience:
-            print(f"Early stopping at epoch {epoch + 1}")
-            break
+        # Frühzeitiger Abbruch, wenn Trend stagniert
+        if len(acc_history) == patience:
+            slope = np.polyfit(range(patience), list(acc_history), 1)[0]
+            print(f"Slope of accuracy trend: {slope:.6f}")
+            if slope < min_slope:
+                print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat")
+                break
 
 
 
