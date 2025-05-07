@@ -52,7 +52,7 @@ def deform_image(
     combined = torch.cat([combined, combined, combined], dim=1)  # (1, 3, H, W)
 
     # f) TPS-Transformation
-    combined = TPS_Batch(combined, device=device).detach().to(device)
+    #combined = TPS_Batch(combined, device=device).detach().to(device)
 
     # g) Noise z erzeugen
     batch_size = combined.shape[0]  # sollte 1 sein
@@ -85,14 +85,15 @@ if __name__ == "__main__":
     re32 = transforms.Resize((32, 32))
 
     # Load the generator model
-    netG = load_generator("./Result/cifar_gan/tuned_G_16.pth", device)
+    netG = load_generator("./Result/cifar_gan/tuned_G_119.pth", device)
 
     # Load the image
-    img = Image.open("./src/Baum.jpg").convert("RGB")
+    img = Image.open("./src/watermelon.jpg").convert("RGB")
     img = re32(img)  # Resize to 32x32
 
     # Deform the image
     out_img = deform_image(netG, img, device=device, re12_transform=re12, re32_transform=re32)
 
     # Show the output image
+    out_img.save("./Result/watermelon.jpg")
     out_img.show()
