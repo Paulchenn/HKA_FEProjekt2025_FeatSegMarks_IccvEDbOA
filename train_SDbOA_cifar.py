@@ -11,7 +11,7 @@ from models import resnet, generation
 from models.resnet import ResNet18, BasicBlock
 from utils.canny import canny
 from skimage.color import rgb2gray
-from tps_grid_gen import TPSGridGen
+from utils.tps_grid_gen import TPSGridGen
 from torch.autograd import Variable
 import itertools
 
