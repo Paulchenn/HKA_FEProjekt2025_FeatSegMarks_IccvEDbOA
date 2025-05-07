@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 from models import resnet, generation
 from utils.canny import canny
 from skimage.color import rgb2gray
-from tps_grid_gen import TPSGridGen
+from utils.tps_grid_gen import TPSGridGen
 from torch.autograd import Variable
 import itertools
 
