@@ -5,14 +5,54 @@ import itertools
 
 from skimage.color import rgb2gray
 from tps_grid_gen import TPSGridGen
+from matplotlib import pyplot as plt
 
 import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
+from torchvision import transforms
 
 # --- Load config ---
 with open('config/config.json', 'r') as f:
     config = json.load(f)
+device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
+
+
+def show_result(
+    num_epoch,
+    show=False,
+    save=False,
+    path='result.png',
+    *,
+    device=device,
+    netG
+):
+    zz = torch.randn(64, 100, 1, 1).to(device)
+    netG.eval()
+    test_images = netG(zz, show_x, bx)
+    netG.train()
+
+    size_figure_grid = 8
+    fig, ax = plt.subplots(size_figure_grid, size_figure_grid, figsize=(5, 5))
+    for i, j in itertools.product(range(size_figure_grid), range(size_figure_grid)):
+        ax[i, j].get_xaxis().set_visible(False)
+        ax[i, j].get_yaxis().set_visible(False)
+
+    for k in range(64):
+        i = k // 8
+        j = k % 8
+        ax[i, j].cla()
+        ax[i, j].imshow(np.transpose(test_images[k].cpu().data.numpy(), (1, 2, 0)))
+
+    label = 'Epoch {0}'.format(num_epoch)
+    fig.text(0.5, 0.04, label, ha='center')
+    plt.savefig(path)
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
 
 class EMSE:
     """
@@ -22,7 +62,13 @@ class EMSE:
     def __init__(self):
         self.device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
 
-    def get_edge(self, images, sigma=1.0, high_threshold=0.3, low_threshold=0.2):
+    def get_edge(
+        self,
+        images,
+        sigma=1.0,
+        high_threshold=0.3,
+        low_threshold=0.2
+    ):
         # median = kornia.filters.MedianBlur((3,3))
         # for i in range(3):
         #     images = median(images)
@@ -43,7 +89,10 @@ class EMSE:
         edges = torch.from_numpy(edges).to(self.device)
         return edges
     
-    def rgb2Gray_batch(self, input):
+    def rgb2Gray_batch(
+        self,
+        input
+    ):
         R = input[:, 0]
         G = input[:, 1]
         B = input[:, 2]
@@ -53,7 +102,11 @@ class EMSE:
         input = input.view(input.shape[0], 1, 32, 32)
         return input
     
-    def get_info(self, input, batch_size):
+    def get_info(
+        self,
+        input,
+    ):
+        batch_size = input.shape[0]
         gray = self.rgb2Gray_batch(input)
         # gray = input
         mat1 = torch.cat([gray[:, :, 0, :].unsqueeze(2), gray], 2)[:, :, :gray.shape[2], :]
@@ -71,6 +124,37 @@ class EMSE:
 
         return info
     
+    def doEMSE(
+        self,
+        img,
+        sigma=1.0,
+        high_threshold=0.3,
+        low_threshold=0.2
+    ):
+        # get the edge map created by Canny
+        robustCanny = self.get_edge(
+            img,
+            sigma,
+            high_threshold,
+            low_threshold
+        )
+
+        # get the self-information guided map
+        selfInfoMap = self.get_info(img)
+
+        # normalize the edge map created by Canny
+        robustCanny = torch.where(robustCanny < 0, 0., 1.)
+
+        # inverse and normalize the Self-Information guided map
+        selfInfoMap = selfInfoMap * -1
+        selfInfoMap = torch.where(selfInfoMap < 0, 0., 1.)
+
+        # get the final edge map
+        edgeMap = robustCanny + selfInfoMap
+        edgeMap = torch.cat([edgeMap, edgeMap, edgeMap], 1).detach().to(self.device)
+
+        return edgeMap
+    
 
 class TSD:
     """
@@ -81,7 +165,12 @@ class TSD:
     def __init__(self):
         self.device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
 
-    def grid_sample(self, input, grid, canvas=None):
+    def grid_sample(
+        self,
+        input,
+        grid,
+        canvas=None
+    ):
         output = F.grid_sample(input, grid, align_corners=True).to(self.device)
         if canvas is None:
             return output
@@ -91,8 +180,11 @@ class TSD:
             padded_output = output * output_mask + canvas * (1 - output_mask)
             return padded_output
 
-    def TPS_Batch(self, imgs):
-        height, width = imgs.shape[3], imgs.shape[2]
+    def TPS_Batch(
+        self,
+        imgs
+    ):
+        height, width = imgs.shape[2], imgs.shape[3]
         tps_img = []
         for i in range(imgs.shape[0]):
             img = imgs[i, :, :, :]
@@ -112,3 +204,155 @@ class TSD:
             tps_img.append(target_image)
         tps_img = torch.cat(tps_img, dim=0)
         return tps_img
+    
+    def doTSD(
+        self,
+        img
+    ):
+        # get the TPS-based shape deformation
+        tpsImg = self.TPS_Batch(img)
+        return tpsImg
+    
+
+class TSG:
+    """
+    Texture and shape-based generation (TSG)
+    """
+
+    def __init__(self):
+        self.device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
+
+    def blur_image(
+        self,
+        img,
+        downSize=12
+    ):
+        # blur image by downsampling and interpolation / upsampling
+
+        # original image height and width
+        height, width = img.shape[2], img.shape[3]
+        if height < width:
+            print("Denoising: Input Height smaler than input width!")
+            print("Denoising: Taking smaler input height.")
+            upSize = height
+        elif width < height:
+            print("Denoising: Input Height bigger than input width!")
+            print("Denoising: Taking smaler input width.")
+            upSize = width
+        else:
+            upSize = height
+
+
+        # downsampling
+        downsampler = transforms.Resize(downSize, downSize)
+        downsampled = downsampler(img)
+
+        # upsampling
+        upsampler   = transforms.Resize(upSize, upSize)
+        upsampled   = upsampler(downsampled)
+
+        return upsampled
+    
+    def generateImg(
+        self,
+        mn_batch,
+        netG,
+        edgeMap,
+        tpsImg
+    ):
+        z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(self.device))
+
+        G_result = netG(z_, edgeMap, tpsImg)
+
+        return G_result
+    
+    def getDResult(
+        self,
+        img,
+        netD
+    ):
+        D_result, aux_output = netD(img)
+        D_result = D_result.squeeze()
+
+        D_result_1 = D_result.mean()
+
+        return D_result_1, aux_output
+    
+    def doTSG(
+        self,
+        img,
+        label,
+        edgeMap,
+        tpsImg,
+        netD,
+        netG,
+        cls,
+        optimD,
+        optimG,
+        optimC,
+        CE_loss,
+        L1_loss,
+        downSize=12
+    ):
+        mn_batch = img.shape[0]
+        
+        # blur image to minimize impact of texture
+        img_blur = self.blur_image(img, downSize)
+
+        # Discriminator result of real image without blur
+        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+        D_result_realImg = -D_result_realImg
+
+        # Generate image and get Discriminator result
+        G_result_1 = self.generateImg(mn_batch, netG, edgeMap, tpsImg)
+        D_result_genImg, _ = self.getDResult(G_result_1, netD)
+
+        # === Discriminator training ===
+        # Zero the gradients of discriminator
+        netD.zero_grad()
+        # Compute the classification loss of discriminator
+        D_celoss = CE_loss(aux_output_realImg, label)
+        # Compute the whole loss of discriminator
+        D_loss = D_result_realImg + D_result_genImg + 0.5 * D_celoss
+        # Calculate gradient of discriminator
+        D_loss.backward()
+        # Update the discriminator by calling optimizer
+        optimD.step()
+
+        # === Generator training (part 1)===
+        # Zero the gradients of generator
+        netG.zero_grad()
+        # Generate new image and get discriminator result
+        G_result_2 = self.generateImg(mn_batch, netG, edgeMap, tpsImg)
+        D_result_genImg, aux_output_genImg = self.getDResult(G_result_2, netD)
+        # If Image is grayscale (only 1 channel), repeat / duplicate the channel to 3
+        img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+        G_L1_loss = L1_loss(G_result_2, img_for_loss)
+        # Compute the classification loss of generator and sum them up
+        G_celoss = CE_loss(aux_output_genImg, label).sum()
+
+        # === Classifier training ===
+        # Zero the gradients of classifier
+        cls.zero_grad()
+        # Compute the classification loss of classifier
+        cls_output = cls(G_result_2)
+        cls_loss = CE_loss(cls_output, label)
+        ### ????? >>>>> Classifier optimation missing? <<<<< ????? #####
+
+        # === Generator training (part 2) ===
+        # Loss of edge information
+        combined_gray = edgeMap[:, 0:1, : , :]
+        edge_loss = L1_loss(
+            EMSE.get_info(G_result_2),
+            combined_gray
+        )
+        
+        # Compute the whole loss of generator
+        G_loss_tot = G_L1_loss - D_result_genImg + 0.5 * G_celoss + edge_loss + cls_loss
+        # Calculate gradient of generator
+        G_loss_tot.backward()
+        # Update the generator by calling optimizer
+        optimG.step()
+
+        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, G_loss_tot
+        
