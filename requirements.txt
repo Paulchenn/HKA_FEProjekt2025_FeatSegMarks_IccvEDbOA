@@ -3,3 +3,4 @@ torchvision
 tqdm
 requests
 Pillow
+numpy
