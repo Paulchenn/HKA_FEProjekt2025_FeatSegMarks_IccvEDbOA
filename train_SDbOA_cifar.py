@@ -324,8 +324,8 @@ if __name__ == "__main__":
             combined = TPS_Batch(combined)  # Anwendung einer Transformation auf das kombinierte Bild
 
             # Bild unscharf machen und auf neue Größe ändern
-            blur_img = re12(img)
-            blur_img = re32(blur_img)
+            blur_img = re12(img)    # downsampling 
+            blur_img = re32(blur_img)   # upsampling / interpolation
 
             # Diskriminator-Bewertung des echten Bildes
             D_result, aux_output = netD(img)
