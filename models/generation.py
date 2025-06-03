@@ -113,7 +113,7 @@ class generator(nn.Module):
         return x
 
 class Discriminator(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes=10):
         super(Discriminator, self).__init__()
 
         def discriminator_block(in_filters, out_filters, bn=True):
@@ -136,7 +136,7 @@ class Discriminator(nn.Module):
         # Output layers
         self.adv_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, 1), nn.Sigmoid())
         self.aux_layer = nn.Sequential(
-            nn.Linear(128 * ds_size ** 2, 10),
+            nn.Linear(128 * ds_size ** 2, num_classes),
             nn.Softmax(dim=1)  # ✅ Warnung behoben
         )
 
