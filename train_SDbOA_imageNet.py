@@ -61,6 +61,7 @@ sys.stderr = Tee(sys.__stderr__, log_file)
 if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
+
 if __name__ == "__main__":
     # # start debugging
     # pdb.set_trace()
