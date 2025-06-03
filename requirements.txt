@@ -4,3 +4,5 @@ tqdm
 requests
 Pillow
 numpy
+scikit-image
+matplotlib
