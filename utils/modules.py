@@ -1,10 +1,10 @@
 import json
 import numpy as np
-import canny
 import itertools
 
 from skimage.color import rgb2gray
-from tps_grid_gen import TPSGridGen
+from skimage.feature import canny
+from utils.tps_grid_gen import TPSGridGen
 from matplotlib import pyplot as plt
 
 import torch
@@ -18,8 +18,48 @@ with open('config/config.json', 'r') as f:
 device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
 
 
+def show_images(
+    img,
+    deformedImg,
+    edgeMap
+):
+    """
+    Show the original image, deformed image, and edge map.
+    :param img: Original image tensor
+    :param deformedImg: Deformed image tensor
+    :param edgeMap: Edge map tensor
+    """
+    
+    # === Show the original and deformed image ===
+    plt.figure(figsize=(10, 5))  # Adjusted figure size
+    plt.subplot(1, 3, 1)
+    plt.axis('off')
+    plt.title('Original Image')
+    plt.imshow(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5)
+
+    plt.subplot(1, 3, 2)
+    plt.axis('off')
+    plt.title('Deformed Image')
+    deformedImg_clipped = deformedImg[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5
+    deformedImg_clipped = np.clip(deformedImg_clipped, 0, 1)
+    plt.imshow(deformedImg_clipped)
+
+    plt.subplot(1, 3, 3)
+    plt.axis('off')
+    plt.title('Edge Map')
+    edgeMap_clipped = edgeMap[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5
+    edgeMap_clipped = np.clip(edgeMap_clipped, 0, 1)
+    plt.imshow(edgeMap_clipped)
+
+    plt.show(block=False)
+    plt.pause(2)  # Show for 2 seconds (adjust as needed)
+    plt.close()
+
+
 def show_result(
     num_epoch,
+    edgeMap,
+    deformedImg,
     show=False,
     save=False,
     path='result.png',
@@ -29,7 +69,7 @@ def show_result(
 ):
     zz = torch.randn(64, 100, 1, 1).to(device)
     netG.eval()
-    test_images = netG(zz, show_x, bx)
+    test_images = netG(zz, edgeMap, deformedImg)
     netG.train()
 
     size_figure_grid = 8
@@ -96,15 +136,23 @@ class EMSE:
         R = input[:, 0]
         G = input[:, 1]
         B = input[:, 2]
-        input[:, 0] = 0.299 * R + 0.587 * G + 0.114 * B
-        input = input[:, 0]
 
-        input = input.view(input.shape[0], 1, 32, 32)
-        return input
-    
+        # Convert RGB to grayscale using the luminosity method
+        # Using the formula: gray = 0.299 * R + 0.587 * G + 0.114 * B
+        # Factors come from ITU-R BT.601 standard for converting RGB to Y (luminance)
+        # Note: In-place operations are not recommended for gradients, so we avoid them here
+        gray = 0.299 * R + 0.587 * G + 0.114 * B  # No in-place operation
+
+        # Dynamically calculate the height and width
+        height = int((gray.numel() // gray.shape[0]) ** 0.5)
+        width = height
+
+        gray = gray.view(gray.shape[0], 1, height, width)
+        return gray
+        
     def get_info(
         self,
-        input,
+        input
     ):
         batch_size = input.shape[0]
         gray = self.rgb2Gray_batch(input)
@@ -244,11 +292,11 @@ class TSG:
 
 
         # downsampling
-        downsampler = transforms.Resize(downSize, downSize)
+        downsampler = transforms.Resize((downSize, downSize))
         downsampled = downsampler(img)
 
         # upsampling
-        upsampler   = transforms.Resize(upSize, upSize)
+        upsampler   = transforms.Resize((upSize, upSize))
         upsampled   = upsampler(downsampled)
 
         return upsampled
@@ -257,12 +305,12 @@ class TSG:
         self,
         mn_batch,
         netG,
-        edgeMap,
-        tpsImg
+        deformedImg,
+        blurImg
     ):
         z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(self.device))
 
-        G_result = netG(z_, edgeMap, tpsImg)
+        G_result = netG(z_, deformedImg, blurImg)
 
         return G_result
     
@@ -278,11 +326,12 @@ class TSG:
 
         return D_result_1, aux_output
     
-    def doTSG(
+    def doTSG_training(
         self,
+        emse,
+        tsd,
         img,
         label,
-        edgeMap,
         tpsImg,
         netD,
         netG,
@@ -304,7 +353,7 @@ class TSG:
         D_result_realImg = -D_result_realImg
 
         # Generate image and get Discriminator result
-        G_result_1 = self.generateImg(mn_batch, netG, edgeMap, tpsImg)
+        G_result_1 = self.generateImg(mn_batch, netG, tpsImg, img_blur)
         D_result_genImg, _ = self.getDResult(G_result_1, netD)
 
         # === Discriminator training ===
@@ -323,7 +372,7 @@ class TSG:
         # Zero the gradients of generator
         netG.zero_grad()
         # Generate new image and get discriminator result
-        G_result_2 = self.generateImg(mn_batch, netG, edgeMap, tpsImg)
+        G_result_2 = self.generateImg(mn_batch, netG, tpsImg, img_blur)
         D_result_genImg, aux_output_genImg = self.getDResult(G_result_2, netD)
         # If Image is grayscale (only 1 channel), repeat / duplicate the channel to 3
         img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
@@ -341,9 +390,9 @@ class TSG:
 
         # === Generator training (part 2) ===
         # Loss of edge information
-        combined_gray = edgeMap[:, 0:1, : , :]
+        combined_gray = tpsImg[:, 0:1, : , :]
         edge_loss = L1_loss(
-            EMSE.get_info(G_result_2),
+            emse.get_info(G_result_2),
             combined_gray
         )
         
@@ -356,3 +405,36 @@ class TSG:
 
         return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, G_loss_tot
         
+    def doTSG_testing(
+        self,
+        img,
+        tpsImg,
+        netG,
+        cls
+    ):
+        '''
+        Generate image and classify it
+        :param img: input image
+        :param tpsImg: deformed (after TSD) image
+        :param netG: generator network
+        :param cls: classifier network
+        :return: prediction of classifier
+        '''
+        mn_batch = img.shape[0]
+        
+        # blur image
+        img_blur = self.blur_image(img)
+
+        # Generate image and get Discriminator result
+        G_result = self.generateImg(
+            mn_batch,
+            netG,
+            tpsImg,
+            img_blur
+        )
+        
+        # Classification of generated image
+        cls_output = cls(G_result)
+        prediction = torch.argmax(cls_output, 1)
+
+        return prediction
