@@ -9,6 +9,7 @@ from utils.get_ImageNet import main as get_ImageNet
 from models import generation
 from models.resnet import ResNet18, BasicBlock
 from utils.modules  import *
+from collections import deque
 
 # Path of the current script
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -18,11 +19,21 @@ CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
 # === Load parameters for training from config.json ===
 with open(os.path.join(SCRIPT_DIR, 'config/config.json'), 'r') as f:
     config = json.load(f)
+
 DEVICE = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = config["batch_size"]
 EPOCHS = config["epochs"]
+
+IMG_SIZE = config["image_size"]
 GEN_IN_DIM = config["generator_input_dim"]
+NUM_CLASSES = config["num_classes"]
 PATIENCE = config["patience"]
+acc_history = deque(maxlen=PATIENCE)
+MIN_SLOPE = config["min_slope"]
+
+SHOW_IMAGES = config["show_images"]
+SHOW_IMAGES_INTERVAL = config["show_images_interval"]
+
 DEBUG_MODE = config["debug_mode"]
 DEBUG_ITERS_START = config["debugIterations_strt"]
 DEBUG_ITERS_AMOUNT = config["debugIterations_amount"]
@@ -31,8 +42,8 @@ LR_DISC = config["learning_rate"]["discriminator"]
 LR_CLS = config["learning_rate"]["classifier"]
 
 
+
 if __name__ == "__main__":
-    image_size = 128
 
     # === Initialize Trainiingclasses ===
     emse    = EMSE()    # Initialize EMSE class
@@ -41,8 +52,8 @@ if __name__ == "__main__":
 
     # Transformations for preprocessing training data
     transform_train = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.CenterCrop(image_size),
+        transforms.Resize(IMG_SIZE),
+        transforms.CenterCrop(IMG_SIZE),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
@@ -50,22 +61,26 @@ if __name__ == "__main__":
 
     # Transformations for preprocessing test data
     transform_test = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.CenterCrop(image_size),
+        transforms.Resize(IMG_SIZE),
+        transforms.CenterCrop(IMG_SIZE),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
     # === Load the dataset (ImageNet) ===
-    train_dataset, test_dataset = get_ImageNet(BATCH_SIZE)
+    train_dataset, test_dataset = get_ImageNet(
+        transform_train=transform_train,
+        transform_test=transform_test,
+        batch_size=BATCH_SIZE
+    )
     
     # Set best accuracy to 0 to be sure that first accuracy is better
     best_acc = 0
     
     # === Initialize networks (and move to CPU/GPU) ===
     netG    = generation.generator(GEN_IN_DIM).to(DEVICE)       # Generator network with input size GEN_IN_DIM
-    netD    = generation.Discriminator().to(DEVICE)             # Discriminator to distinguish real/fake images
-    cls     = ResNet18(BasicBlock, num_classes=10).to(DEVICE)   # Classifier (here: ResNet-18)
+    netD    = generation.Discriminator(NUM_CLASSES).to(DEVICE)             # Discriminator to distinguish real/fake images
+    cls     = ResNet18(BasicBlock, num_classes=NUM_CLASSES).to(DEVICE)   # Classifier (here: ResNet-18)
 
     # === Initialize optimizers ===
     optimG = optim.Adam(netG.parameters(), lr=LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
@@ -76,10 +91,28 @@ if __name__ == "__main__":
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
     CE_loss = nn.CrossEntropyLoss()      # Classification Loss (for multi-class outputs like CIFAR-10 Classes)
 
-    ##### ===== TRAINING ===== #####
-    # Initailisation of values for early stop
-    no_improvement_counter = 0
+    # === Create one batch of test data ===
+    for i, (img, label) in enumerate(test_dataset):
+        img     = img.to(DEVICE)
+        label   = label.to(DEVICE)
 
+        # Reset gradients
+        netD.zero_grad()
+        netG.zero_grad()
+        cls.zero_grad()
+
+        # === EMSE >>>
+        EDGE_MAP_TEST = emse.doEMSE(img)
+        # <<< EMSE ===
+
+        # === TSD >>>
+        DEFORMED_IMG_TEST = tsd.doTSD(img)
+        # <<< TSD ===
+
+        break
+
+    
+    ##### ===== TRAINING ===== #####
     for epoch in range(EPOCHS):
         print(epoch)
 
@@ -98,6 +131,10 @@ if __name__ == "__main__":
                 param_group['lr'] = LR_CLS / 10
 
         for i, (img, label) in enumerate(train_dataset):
+            # For Debugging
+            if DEBUG_MODE and i < DEBUG_ITERS_START:
+                continue
+
             img     = img.to(DEVICE)
             label   = label.to(DEVICE)
 
@@ -106,14 +143,23 @@ if __name__ == "__main__":
             # <<< EMSE ===
 
             # === TSD >>>
-            deformedImg = tsd.doTSD(img)
+            deformedImg = tsd.doTSD(edgeMap)
             # <<< TSD ===
 
+            # === Show images depending on configuration ===
+            if SHOW_IMAGES and i % SHOW_IMAGES_INTERVAL == 0:
+                show_images(
+                    img,
+                    deformedImg,
+                    edgeMap
+                )
+
             # === TSG >>>
-            netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot = tsg.doTSG(
+            netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot = tsg.doTSG_training(
+                emse,
+                tsd,
                 img,
                 label,
-                edgeMap,
                 deformedImg,
                 netD,
                 netG,
@@ -140,7 +186,13 @@ if __name__ == "__main__":
         if not os.path.exists(path2save):
             os.makedirs(path2save)
         try:
-            show_result(epoch, path=fixed_p, netG=netG)  # Shows the result of actual epoch
+            show_result(  # Shows the result of actual epoch
+                epoch,
+                EDGE_MAP_TEST,
+                DEFORMED_IMG_TEST,
+                path=fixed_p,
+                netG=netG
+            )
         except IndexError as e:
             print(f"IndexError: {e}")
         torch.save(netG.state_dict(), './Result/cifar_gan/tuned_G_' + str(epoch) + '.pth')  # Saves Generator
@@ -154,3 +206,59 @@ if __name__ == "__main__":
         # Counter for correct predictions and total predictions
         correct = torch.zeros(1).squeeze().to(device)
         total   = torch.zeros(1).squeeze().to(device)
+
+        for i, (img, label) in enumerate(test_dataset):
+            # For Debugging
+            if DEBUG_MODE and i < DEBUG_ITERS_START:
+                continue
+
+            img     = img.to(DEVICE)
+            label   = label.to(DEVICE)
+
+            # === EMSE >>>
+            edgeMap = emse.doEMSE(img)
+            # <<< EMSE ===
+
+            # === TSD >>>
+            # TSD module is not used in the validation phase
+            # --> no deformation of the image
+            # deformed image is the same as edge map
+            deformedImg = edgeMap
+            # <<< TSD ===
+
+            # === Generation and Classification >>>
+            prediction = TSG.doTSG_testing(
+                img,
+                deformedImg,
+                netG,
+                cls
+            )
+            # <<< Generation and Classification ===
+
+            # Count correct predictions and total predictions
+            correct += (prediction == label).sum().float()
+            total += len(label)
+
+            # For debuging (Training of even one Epoch takes very long)
+            if DEBUG_MODE and i >= DEBUG_ITERS_START+DEBUG_ITERS_AMOUNT:
+                break
+
+        # Calculate accuracy, append to history and print
+        acc = (correct / total).cpu().detach().data.numpy()
+        acc_history.append(acc)
+        print('Epoch: ', epoch + 1, ' test accuracy: ', acc)
+
+        if acc > best_acc:
+            best_acc = acc
+            print('Improvement, best accuracy: ', acc)
+            torch.save(cls.state_dict(), './Result/best_cls.pth')
+        else:
+            print('No improvement, best accuracy: ', best_acc)
+
+        # Early stopping
+        if len(acc_history) >= PATIENCE:
+            slope = np.polyfit(range(PATIENCE), list(acc_history), 1)[0]
+            print(f"Slope of accuracy trend: {slope:.6f}")
+            if slope < MIN_SLOPE:
+                print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
+                break
