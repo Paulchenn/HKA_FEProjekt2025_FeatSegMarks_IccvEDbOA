@@ -27,8 +27,8 @@ SELECTED_SYNSETS = config_ImageNet["SELECTED_SYNSETS"]
 # === Download ImageNet from URL with Authentification ===
 def download_file(url, output_path):
     if os.path.exists(output_path):
-        print(f"{output_path} existiert bereits.")
-        return
+        print(f"{output_path} already downloaded.")
+        return True
     with requests.get(url, stream=True, auth=(USERNAME, PASSWORD)) as r:
         r.raise_for_status()
         with open(output_path, "wb") as f:
@@ -37,15 +37,16 @@ def download_file(url, output_path):
 
 # === Extract training data ===
 def extract_train_data():
-    tar_path = os.path.join(DATA_ROOT_FULL, "ILSVRC2012_img_train.tar")
+    tar_path = os.path.join(DATA_ROOT_FULL)
     train_extract_dir = os.path.join(DATA_ROOT_FULL, "train")
     os.makedirs(train_extract_dir, exist_ok=True)
     
-    with tarfile.open(tar_path) as tar:
-        tar.extractall(path=DATA_ROOT_FULL)
+    if tar_path.endswith(".tar"):
+        with tarfile.open(tar_path) as tar:
+            tar.extractall(path=DATA_ROOT_FULL)
     
     for synset in SELECTED_SYNSETS:
-        class_tar = os.path.join(DATA_ROOT_FULL, f"{synset}.tar")
+        class_tar = os.path.join(DATA_ROOT_FULL, 'train', f"{synset}")
         if not os.path.exists(class_tar):
             continue
         class_dir = os.path.join(train_extract_dir, synset)
@@ -91,31 +92,49 @@ def extract_val_data():
     shutil.rmtree(raw_dir)
 
 # === Prepare dataloader ===
-def get_loader(subdir, batch_size=64, myShuffle=False):
+def get_loader(
+    subdir,
+    myTransform,
+    myBatchSize=64,
+    myShuffle=False,
+):
     path = os.path.join(DATA_ROOT_FULL, subdir)
-    transform = transforms.Compose([
-        transforms.Resize(128),
-        transforms.CenterCrop(128),
-        transforms.ToTensor()
-    ])
-    dataset = datasets.ImageFolder(path, transform=transform)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=myShuffle)
+
+    dataset = datasets.ImageFolder(path, transform=myTransform)
+
+    return DataLoader(dataset, batch_size=myBatchSize, shuffle=myShuffle)
 
 # === Main-function ===
-def main(batch_size=64):
+def main(
+    transform_train,
+    transform_test,
+    batch_size=64
+):
     os.makedirs(DATA_ROOT_FULL, exist_ok=True)
 
     print("==> Loading training data")
-    download_file(TRAIN_TAR_URL, os.path.join(DATA_ROOT_FULL, "ILSVRC2012_img_train.tar"))
-    extract_train_data()
+    alreadyLoaded_train = download_file(TRAIN_TAR_URL, DATA_ROOT_FULL)
+    if alreadyLoaded_train == False:
+        extract_train_data()
 
     print("==> Loading validation data")
-    download_file(VAL_TAR_URL, os.path.join(DATA_ROOT_FULL, "ILSVRC2012_img_val.tar"))
-    extract_val_data()
+    alreadyLoaded_test = download_file(VAL_TAR_URL, DATA_ROOT_FULL)
+    if alreadyLoaded_test == False:
+        extract_val_data()
 
     print("==> Initializing dataloaders")
-    train_loader = get_loader("train", batch_size, True)
-    val_loader = get_loader("val")
+    train_loader = get_loader(
+        "train",
+        myTransform=transform_train,
+        myBatchSize=batch_size,
+        myShuffle=True
+    )
+    val_loader = get_loader(
+        "val",
+        myTransform=transform_test,
+        myBatchSize=batch_size,
+        myShuffle=False
+    )
 
     print(f"Train: {len(train_loader.dataset)} Pictures")
     print(f"Val: {len(val_loader.dataset)} Pictures")
