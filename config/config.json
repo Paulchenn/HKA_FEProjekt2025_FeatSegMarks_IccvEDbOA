@@ -16,12 +16,17 @@
   "debugIterations_strt": 0,
   "debugIterations_amount": 6,
 
+  "show_images": true,
+  "show_images_interval": 10,
+
   "dataset": {
     "name": "CIFAR10",
     "path": "./src/cifar10"
   },
 
+  "image_size": 32,
   "generator_input_dim": 128,
+  "num_classes": 200,
 
-  "save_path": "./Result/cifar_gan/"
+  "save_path": "./Result/tinyImageNet_gan/"
 }
