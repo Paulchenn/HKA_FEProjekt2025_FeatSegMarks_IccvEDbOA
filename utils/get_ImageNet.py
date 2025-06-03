@@ -29,6 +29,9 @@ def download_file(url, output_path):
     if os.path.exists(output_path):
         print(f"{output_path} already downloaded.")
         return True
+    
+    # If path does not exist, create it and download the dataset
+    #os.makedirs(DATA_ROOT_FULL, exist_ok=True)
     with requests.get(url, stream=True, auth=(USERNAME, PASSWORD)) as r:
         r.raise_for_status()
         with open(output_path, "wb") as f:
@@ -110,8 +113,6 @@ def main(
     transform_test,
     batch_size=64
 ):
-    os.makedirs(DATA_ROOT_FULL, exist_ok=True)
-
     print("==> Loading training data")
     alreadyLoaded_train = download_file(TRAIN_TAR_URL, DATA_ROOT_FULL)
     if alreadyLoaded_train == False:
