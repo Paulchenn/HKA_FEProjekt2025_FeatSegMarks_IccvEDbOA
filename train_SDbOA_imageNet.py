@@ -1,6 +1,7 @@
 import json
 import os
-
+from datetime import datetime
+import time
 import torch
 from torch import nn, optim
 
@@ -110,6 +111,17 @@ if __name__ == "__main__":
         # <<< TSD ===
 
         break
+    
+    # Liste zum Speichern der Metriken
+    epoch_metrics = []
+
+    # Zielordner mit aktuellem Datum anlegen
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    csv_output_dir = os.path.join("Result", "epoch_metrics", run_date)
+    os.makedirs(csv_output_dir, exist_ok=True)
+
+    # Pfad zur CSV-Datei
+    csv_output_path = os.path.join(csv_output_dir, "SDbOA_metrics.csv")
 
     
     ##### ===== TRAINING ===== #####
@@ -199,6 +211,9 @@ if __name__ == "__main__":
         torch.save(netD.state_dict(), './Result/cifar_gan/tuned_D_' + str(epoch) + '.pth')  # Saves Diskriminator
 
         # === Validation Phase ===
+        # Für FPS-Messung: Startzeit erfassen
+        val_start_time = time.time()
+
         netG.eval()
         netD.eval()
         cls.eval()
@@ -254,6 +269,24 @@ if __name__ == "__main__":
             torch.save(cls.state_dict(), './Result/best_cls.pth')
         else:
             print('No improvement, best accuracy: ', best_acc)
+        
+        val_end_time = time.time()
+        val_duration = val_end_time - val_start_time
+        fps = float(total.cpu()) / val_duration
+        print(f"Validation Inference Speed: {fps:.2f} FPS")
+
+        # === Speichere Metriken dieser Epoche ===
+        epoch_metric = {
+            "epoch": epoch + 1,
+            "accuracy": round(float(acc), 4),
+            "loss_total": round(float(loss_tot.item()), 4),
+            "FPS": round(fps, 2),
+            "AUC@5": None,  # Platzhalter – später in Evaluation ersetzen
+            "MMA@3": None,
+            "HomographyAcc": None
+        }
+        epoch_metrics.append(epoch_metric)
+
 
         # Early stopping
         if len(acc_history) >= PATIENCE:
@@ -262,3 +295,14 @@ if __name__ == "__main__":
             if slope < MIN_SLOPE:
                 print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
                 break
+    
+
+    # === Schreibe alle Metriken als CSV-Datei ===
+    csv_fields = epoch_metrics[0].keys() if epoch_metrics else []
+
+    with open(csv_output_path, mode='w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
+        writer.writeheader()
+        writer.writerows(epoch_metrics)
+
+    print(f"[INFO] Epoch-Metriken gespeichert unter: {csv_output_path}")
