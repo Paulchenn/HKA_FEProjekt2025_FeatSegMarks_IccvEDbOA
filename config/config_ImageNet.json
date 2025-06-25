@@ -2,7 +2,7 @@
     "USERNAME": "glpa1013@h-ka.de",
     "PASSWORD": "qahwoZ-qohsik-hexru6",
 
-    "DATA_ROOT": "src/tinyImageNet",
+    "DATA_ROOT": "/mnt/large_file_system/tiny-imagenet-200",
     "DATA_ROOT_2": "src/ILSVRC2012",
     "TRAIN_TAR_URL": "http://www.image-net.org/data/ILSVRC/2012/ILSVRC2012_img_train.tar",
     "VAL_TAR_URL": "http://www.image-net.org/data/ILSVRC/2012/ILSVRC2012_img_val.tar",
