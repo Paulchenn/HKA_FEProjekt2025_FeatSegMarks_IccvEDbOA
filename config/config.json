@@ -1,6 +1,6 @@
 {
   "device": "cuda",
-  "batch_size": 128,
+  "batch_size": 8,
   "epochs": 120,
 
   "learning_rate": {
@@ -20,13 +20,13 @@
   "show_images_interval": 10,
 
   "dataset": {
-    "name": "CIFAR10",
-    "path": "./src/cifar10"
+    "name": "ImageNet256",
+    "path": "./src/ImageNet256"
   },
 
-  "image_size": 32,
+  "image_size": 128,
   "generator_input_dim": 128,
-  "num_classes": 200,
+  "num_classes": 1000,
 
-  "save_path": "./Result/tinyImageNet_gan/"
+  "save_path": "./Result/ImageNet256/"
 }
