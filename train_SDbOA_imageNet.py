@@ -1,5 +1,6 @@
 import json
 import os
+import csv
 from datetime import datetime
 import time
 import torch
@@ -242,7 +243,7 @@ if __name__ == "__main__":
             # <<< TSD ===
 
             # === Generation and Classification >>>
-            prediction = TSG.doTSG_testing(
+            prediction = tsg.doTSG_testing(
                 img,
                 deformedImg,
                 netG,
