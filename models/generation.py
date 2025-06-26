@@ -1,3 +1,4 @@
+import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,9 +6,9 @@ from torch.nn import MultiheadAttention
 
 class generator(nn.Module):
     # initializers
-    def __init__(self, d=128):
+    def __init__(self, d=128, img_size=256):
         super(generator, self).__init__()
-        self.deconv1_1 = nn.ConvTranspose2d(100, d*2, 8, 1, 0)
+        self.deconv1_1 = nn.ConvTranspose2d(100, d*2, int(img_size/4), 1, 0)
         self.deconv1_1_bn = nn.BatchNorm2d(d*2)
         self.deconv1_2 = nn.ConvTranspose2d(10, d*2, 4, 1, 0)
         self.deconv1_2_bn = nn.BatchNorm2d(d*2)
@@ -68,12 +69,15 @@ class generator(nn.Module):
 
         #########################################################
         try:
+            # # Upsample x if needed
+            # if x.shape[2:] != y.shape[2:]:
+            #     x = F.interpolate(x, size=y.shape[2:], mode='bilinear', align_corners=False)
             x = torch.cat([x, y, yc], 1)
         except RuntimeError as e:
             print(f"RuntimeError: {e}")
-            print(f"input batch size: {input.shape[0]}")
-            print(f"label batch size: {label.shape[0]}")
-            print(f"bc batch size: {bc.shape[0]}")
+            print(f"input size: {input.shape}")
+            print(f"label size: {label.shape}")
+            print(f"bc size: {bc.shape}")
 
             min_batch_size = min(input.shape[0], label.shape[0], bc.shape[0])
 
@@ -113,7 +117,7 @@ class generator(nn.Module):
         return x
 
 class Discriminator(nn.Module):
-    def __init__(self, num_classes=10):
+    def __init__(self, num_classes=10, input_size=32):
         super(Discriminator, self).__init__()
 
         def discriminator_block(in_filters, out_filters, bn=True):
@@ -130,14 +134,26 @@ class Discriminator(nn.Module):
             *discriminator_block(64, 128),
         )
 
-        # The height and width of downsampled image
-        ds_size = 32 // 2 ** 4
+        # # The height and width of downsampled image
+        # ds_size = 32 // 2 ** 4
 
-        # Output layers
-        self.adv_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, 1), nn.Sigmoid())
+        # # Output layers
+        # self.adv_layer = nn.Sequential(nn.Linear(128 * ds_size ** 2, 1), nn.Sigmoid())
+        # self.aux_layer = nn.Sequential(
+        #     nn.Linear(128 * ds_size ** 2, num_classes),
+        #     nn.Softmax(dim=1)  # ✅ Warnung behoben
+        # )
+
+        # Dynamically compute the size after conv_blocks
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, input_size, input_size)
+            out = self.conv_blocks(dummy)
+            self.flat_features = out.view(1, -1).shape[1]
+
+        self.adv_layer = nn.Sequential(nn.Linear(self.flat_features, 1), nn.Sigmoid())
         self.aux_layer = nn.Sequential(
-            nn.Linear(128 * ds_size ** 2, num_classes),
-            nn.Softmax(dim=1)  # ✅ Warnung behoben
+            nn.Linear(self.flat_features, num_classes),
+            nn.Softmax(dim=1)
         )
 
     def forward(self, img):
