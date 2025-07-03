@@ -39,6 +39,14 @@ def create_saveFolder(save_path):
         os.makedirs(save_path)
         
 
+def create_saveFolder(save_path):
+    """
+    Creates a save folder for the results if it does not exist.
+    """
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+        
+
 # Path of the current script
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Path to the config directory
