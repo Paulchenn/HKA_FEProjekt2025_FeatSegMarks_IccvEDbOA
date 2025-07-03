@@ -1,6 +1,8 @@
-import json
+import pdb
 import os
-
+import csv
+from datetime import datetime
+import time
 import torch
 from torch import nn, optim
 
@@ -9,7 +11,16 @@ from utils.get_ImageNet import main as get_ImageNet
 from models import generation
 from models.resnet import ResNet18, BasicBlock
 from utils.modules  import *
+from utils.helpers import *
 from collections import deque
+
+def create_saveFolder(save_path):
+    """
+    Creates a save folder for the results if it does not exist.
+    """
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+        
 
 # Path of the current script
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,84 +28,76 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
 
 # === Load parameters for training from config.json ===
-with open(os.path.join(SCRIPT_DIR, 'config/config.json'), 'r') as f:
-    config = json.load(f)
+config = get_config(os.path.join(SCRIPT_DIR, 'config/config.json'))
 
-DEVICE = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
-BATCH_SIZE = config["batch_size"]
-EPOCHS = config["epochs"]
-
-IMG_SIZE = config["image_size"]
-GEN_IN_DIM = config["generator_input_dim"]
-NUM_CLASSES = config["num_classes"]
-PATIENCE = config["patience"]
-acc_history = deque(maxlen=PATIENCE)
-MIN_SLOPE = config["min_slope"]
-
-SHOW_IMAGES = config["show_images"]
-SHOW_IMAGES_INTERVAL = config["show_images_interval"]
-
-DEBUG_MODE = config["debug_mode"]
-DEBUG_ITERS_START = config["debugIterations_strt"]
-DEBUG_ITERS_AMOUNT = config["debugIterations_amount"]
-LR_GEN = config["learning_rate"]["generator"]
-LR_DISC = config["learning_rate"]["discriminator"]
-LR_CLS = config["learning_rate"]["classifier"]
-
-
+# Clear GPU Memory
+torch.cuda.empty_cache()
 
 if __name__ == "__main__":
+    # # start debugging
+    # pdb.set_trace()
 
     # === Initialize Trainiingclasses ===
-    emse    = EMSE()    # Initialize EMSE class
-    tsd     = TSD()     # Initialize TSD class
-    tsg     = TSG()     # Initialize TSG class
+    emse    = EMSE(config=config)    # Initialize EMSE class
+    tsd     = TSD(config=config)     # Initialize TSD class
+    tsg     = TSG(config=config)     # Initialize TSG class
 
     # Transformations for preprocessing training data
     transform_train = transforms.Compose([
-        transforms.Resize(IMG_SIZE),
-        transforms.CenterCrop(IMG_SIZE),
+        transforms.Resize(config.IMG_SIZE),
+        transforms.CenterCrop(config.IMG_SIZE),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
     # Transformations for preprocessing test data
-    transform_test = transforms.Compose([
-        transforms.Resize(IMG_SIZE),
-        transforms.CenterCrop(IMG_SIZE),
+    transform_val = transforms.Compose([
+        transforms.Resize(config.IMG_SIZE),
+        transforms.CenterCrop(config.IMG_SIZE),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
 
     # === Load the dataset (ImageNet) ===
-    train_dataset, test_dataset = get_ImageNet(
+    cwd = os.getcwd()   # current working directory
+    root = os.path.join(
+        os.path.dirname(
+            os.path.dirname(cwd)
+        ),
+        "data/ImageNet256"  # Path to the ImageNet dataset
+    )
+    print(f"Root directory for ImageNet 256: {root}")
+    train_loader, val_loader = get_train_val_loaders(
+        data_dir=root,
         transform_train=transform_train,
-        transform_test=transform_test,
-        batch_size=BATCH_SIZE
+        transform_val=transform_val,
+        batch_size=config.BATCH_SIZE,
+        num_workers=4,
+        pin_memory=True
     )
     
     # Set best accuracy to 0 to be sure that first accuracy is better
     best_acc = 0
     
     # === Initialize networks (and move to CPU/GPU) ===
-    netG    = generation.generator(GEN_IN_DIM).to(DEVICE)       # Generator network with input size GEN_IN_DIM
-    netD    = generation.Discriminator(NUM_CLASSES).to(DEVICE)             # Discriminator to distinguish real/fake images
-    cls     = ResNet18(BasicBlock, num_classes=NUM_CLASSES).to(DEVICE)   # Classifier (here: ResNet-18)
+    netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
+    netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE)             # Discriminator to distinguish real/fake images
+    cls     = ResNet18(BasicBlock, num_classes=config.NUM_CLASSES).to(config.DEVICE)   # Classifier (here: ResNet-18)
 
     # === Initialize optimizers ===
-    optimG = optim.Adam(netG.parameters(), lr=LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
-    optimD = optim.Adam(netD.parameters(), lr=LR_DISC, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimC = optim.Adam(cls.parameters(), lr=LR_CLS, betas=(0., 0.99))      # Optimizer for Classifier (GAN-typical Betas)
+    optimG = optim.Adam(netG.parameters(), lr=config.LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
+    optimD = optim.Adam(netD.parameters(), lr=config.LR_DISC, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
+    optimC = optim.Adam(cls.parameters(), lr=config.LR_CLS, betas=(0., 0.99))      # Optimizer for Classifier (GAN-typical Betas)
 
     # === Initialize loss functions === 
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
     CE_loss = nn.CrossEntropyLoss()      # Classification Loss (for multi-class outputs like CIFAR-10 Classes)
 
     # === Create one batch of test data ===
-    for i, (img, label) in enumerate(test_dataset):
-        img     = img.to(DEVICE)
-        label   = label.to(DEVICE)
+    for i, (img, label) in enumerate(val_loader):
+        img     = img.to(config.DEVICE)
+        label   = label.to(config.DEVICE)
 
         # Reset gradients
         netD.zero_grad()
@@ -110,10 +113,21 @@ if __name__ == "__main__":
         # <<< TSD ===
 
         break
+    
+    # Liste zum Speichern der Metriken
+    epoch_metrics = []
+
+    # Zielordner mit aktuellem Datum anlegen
+    run_date = datetime.now().strftime("%Y-%m-%d")
+    csv_output_dir = os.path.join("Result", "epoch_metrics", run_date)
+    os.makedirs(csv_output_dir, exist_ok=True)
+
+    # Pfad zur CSV-Datei
+    csv_output_path = os.path.join(csv_output_dir, "SDbOA_metrics.csv")
 
     
     ##### ===== TRAINING ===== #####
-    for epoch in range(EPOCHS):
+    for epoch in range(config.EPOCHS):
         print(epoch)
 
         # === Training Phase ===
@@ -124,19 +138,19 @@ if __name__ == "__main__":
         # Reduce learning rate after 60 epochs
         if epoch == 60:
             for param_group in optimG.param_groups:
-                param_group['lr'] = LR_GEN / 10
+                param_group['lr'] = config.LR_GEN / 10
             for param_group in optimD.param_groups:
-                param_group['lr'] = LR_DISC / 10
+                param_group['lr'] = config.LR_DISC / 10
             for param_group in optimC.param_groups:
-                param_group['lr'] = LR_CLS / 10
+                param_group['lr'] = config.LR_CLS / 10
 
-        for i, (img, label) in enumerate(train_dataset):
+        for i, (img, label) in enumerate(train_loader):
             # For Debugging
-            if DEBUG_MODE and i < DEBUG_ITERS_START:
+            if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
                 continue
 
-            img     = img.to(DEVICE)
-            label   = label.to(DEVICE)
+            img     = img.to(config.DEVICE)
+            label   = label.to(config.DEVICE)
 
             # === EMSE >>>
             edgeMap = emse.doEMSE(img)
@@ -147,7 +161,7 @@ if __name__ == "__main__":
             # <<< TSD ===
 
             # === Show images depending on configuration ===
-            if SHOW_IMAGES and i % SHOW_IMAGES_INTERVAL == 0:
+            if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
                 show_images(
                     img,
                     deformedImg,
@@ -173,32 +187,49 @@ if __name__ == "__main__":
             # <<< TSG ===
 
             # Print loss values after every 5 iterations
-            if i % 5 == 0:
-                print('Epoch[', epoch + 1, '/', EPOCHS, '][', i + 1, '/', len(train_dataset), ']: TOTAL_LOSS', loss_tot.item())
+            if i % config.LOG_INTERVAL == 0:
+                print('Epoch[', epoch + 1, '/', config.EPOCHS, '][', i + 1, '/', len(train_loader), ']: TOTAL_LOSS', loss_tot.item())
 
             # For debugging: Stop after a certain number of iterations
-            if DEBUG_MODE and i >= DEBUG_ITERS_START + DEBUG_ITERS_AMOUNT:
+            if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START + config.DEBUG_ITERS_AMOUNT:
                 break
 
         # Save the results and models afer every epochs
-        path2save = './Result/cifar_gan/visualization'
-        fixed_p = path2save + '/' + str(epoch) + '.png'
-        if not os.path.exists(path2save):
-            os.makedirs(path2save)
+        # Create a directory to save the results
+        folder2save_epochImg = os.path.join(config.SAVE_PATH, 'visualization')
+        create_saveFolder(folder2save_epochImg)  # Create folder to save epoch images
+        num_digits = len(str(config.EPOCHS))
+        path2save_epochImg = os.path.join(folder2save_epochImg, f'Epoch_{epoch+1:0{num_digits}d}.png')  # Path to save the results
+        
         try:
             show_result(  # Shows the result of actual epoch
                 epoch,
                 EDGE_MAP_TEST,
                 DEFORMED_IMG_TEST,
-                path=fixed_p,
-                netG=netG
+                path=path2save_epochImg,
+                netG=netG,
+                show=False,
+                save=True
             )
         except IndexError as e:
             print(f"IndexError: {e}")
-        torch.save(netG.state_dict(), './Result/cifar_gan/tuned_G_' + str(epoch) + '.pth')  # Saves Generator
-        torch.save(netD.state_dict(), './Result/cifar_gan/tuned_D_' + str(epoch) + '.pth')  # Saves Diskriminator
+        
+        # Save the Generator models after every epoch
+        folder2save_tunedG = os.path.join(config.SAVE_PATH, 'tuned_G')
+        create_saveFolder(folder2save_tunedG)  # Create folder to save tuned Generator
+        path2save_tunedG = os.path.join(folder2save_tunedG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+        torch.save(netG.state_dict(), path2save_tunedG)  # Saves Generator
+
+        # Save the Discriminator models after every epoch
+        folder2save_tunedD = os.path.join(config.SAVE_PATH, 'tuned_D')
+        create_saveFolder(folder2save_tunedD)  # Create folder to save tuned Discriminator
+        path2save_tunedD = os.path.join(folder2save_tunedD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+        torch.save(netD.state_dict(), path2save_tunedD)  # Saves Diskriminator
 
         # === Validation Phase ===
+        # Fuer FPS-Messung: Startzeit erfassen
+        val_start_time = time.time()
+
         netG.eval()
         netD.eval()
         cls.eval()
@@ -207,13 +238,13 @@ if __name__ == "__main__":
         correct = torch.zeros(1).squeeze().to(device)
         total   = torch.zeros(1).squeeze().to(device)
 
-        for i, (img, label) in enumerate(test_dataset):
+        for i, (img, label) in enumerate(val_loader):
             # For Debugging
-            if DEBUG_MODE and i < DEBUG_ITERS_START:
+            if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
                 continue
 
-            img     = img.to(DEVICE)
-            label   = label.to(DEVICE)
+            img     = img.to(config.DEVICE)
+            label   = label.to(config.DEVICE)
 
             # === EMSE >>>
             edgeMap = emse.doEMSE(img)
@@ -227,7 +258,7 @@ if __name__ == "__main__":
             # <<< TSD ===
 
             # === Generation and Classification >>>
-            prediction = TSG.doTSG_testing(
+            prediction = tsg.doTSG_testing(
                 img,
                 deformedImg,
                 netG,
@@ -240,12 +271,12 @@ if __name__ == "__main__":
             total += len(label)
 
             # For debuging (Training of even one Epoch takes very long)
-            if DEBUG_MODE and i >= DEBUG_ITERS_START+DEBUG_ITERS_AMOUNT:
+            if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START+config.DEBUG_ITERS_AMOUNT:
                 break
 
         # Calculate accuracy, append to history and print
         acc = (correct / total).cpu().detach().data.numpy()
-        acc_history.append(acc)
+        config.acc_history.append(acc)
         print('Epoch: ', epoch + 1, ' test accuracy: ', acc)
 
         if acc > best_acc:
@@ -254,11 +285,40 @@ if __name__ == "__main__":
             torch.save(cls.state_dict(), './Result/best_cls.pth')
         else:
             print('No improvement, best accuracy: ', best_acc)
+        
+        val_end_time = time.time()
+        val_duration = val_end_time - val_start_time
+        fps = float(total.cpu()) / val_duration
+        print(f"Validation Inference Speed: {fps:.2f} FPS")
+
+        # === Speichere Metriken dieser Epoche ===
+        epoch_metric = {
+            "epoch": epoch + 1,
+            "accuracy": round(float(acc), 4),
+            "loss_total": round(float(loss_tot.item()), 4),
+            "FPS": round(fps, 2),
+            "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
+            "MMA@3": None,
+            "HomographyAcc": None
+        }
+        epoch_metrics.append(epoch_metric)
+
 
         # Early stopping
-        if len(acc_history) >= PATIENCE:
-            slope = np.polyfit(range(PATIENCE), list(acc_history), 1)[0]
+        if len(config.acc_history) >= config.PATIENCE:
+            slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
             print(f"Slope of accuracy trend: {slope:.6f}")
-            if slope < MIN_SLOPE:
+            if slope < config.MIN_SLOPE:
                 print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
                 break
+    
+
+    # === Schreibe alle Metriken als CSV-Datei ===
+    csv_fields = epoch_metrics[0].keys() if epoch_metrics else []
+
+    with open(csv_output_path, mode='w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
+        writer.writeheader()
+        writer.writerows(epoch_metrics)
+
+    print(f"[INFO] Saved Epoch-Metrics at: {csv_output_path}")

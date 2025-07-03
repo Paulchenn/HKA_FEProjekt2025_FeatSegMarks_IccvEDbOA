@@ -1,6 +1,7 @@
 import os
 import tarfile
 import requests
+import pdb
 from tqdm import tqdm
 import json
 import shutil
@@ -18,7 +19,10 @@ with open(os.path.join(CONFIG_DIR, 'config_ImageNet.json'), 'r') as f:
 USERNAME = config_ImageNet["USERNAME"]
 PASSWORD = config_ImageNet["PASSWORD"]
 DATA_ROOT = config_ImageNet["DATA_ROOT"]
-DATA_ROOT_FULL = os.path.join(os.path.dirname(SCRIPT_DIR), DATA_ROOT)
+# DATA_ROOT_FULL = os.path.join(os.path.dirname(SCRIPT_DIR), DATA_ROOT)
+cwd = os.getcwd()
+root = os.path.dirname(os.path.dirname(cwd))
+DATA_ROOT_FULL = os.path.join(root, "data")
 TRAIN_TAR_URL = config_ImageNet["TRAIN_TAR_URL"]
 VAL_TAR_URL = config_ImageNet["VAL_TAR_URL"]
 VAL_GT_FILE = config_ImageNet["VAL_GT_FILE"]

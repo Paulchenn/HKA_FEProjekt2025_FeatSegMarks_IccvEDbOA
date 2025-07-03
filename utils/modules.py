@@ -1,6 +1,8 @@
 import json
 import numpy as np
 import itertools
+import pdb
+import os
 
 from skimage.color import rgb2gray
 from skimage.feature import canny
@@ -62,31 +64,50 @@ def show_result(
     deformedImg,
     show=False,
     save=False,
-    path='result.png',
+    path='Result/result.png',
     *,
     device=device,
     netG
 ):
-    zz = torch.randn(64, 100, 1, 1).to(device)
+    mn_batch = edgeMap.shape[0]
+
+    zz = torch.randn(mn_batch, 100, 1, 1).to(device)
     netG.eval()
     test_images = netG(zz, edgeMap, deformedImg)
     netG.train()
 
-    size_figure_grid = 8
+    size_figure_grid = int(np.ceil(np.sqrt(mn_batch)))
     fig, ax = plt.subplots(size_figure_grid, size_figure_grid, figsize=(5, 5))
     for i, j in itertools.product(range(size_figure_grid), range(size_figure_grid)):
         ax[i, j].get_xaxis().set_visible(False)
         ax[i, j].get_yaxis().set_visible(False)
 
-    for k in range(64):
-        i = k // 8
-        j = k % 8
-        ax[i, j].cla()
-        ax[i, j].imshow(np.transpose(test_images[k].cpu().data.numpy(), (1, 2, 0)))
+    for k in range(mn_batch):
+        i = k // size_figure_grid
+        j = k % size_figure_grid
+        if i < size_figure_grid and j < size_figure_grid:
+            ax[i, j].cla()
+            img = test_images[k].cpu().data.numpy()
+            img = np.transpose(img, (1, 2, 0))
+            img = (img * 0.5) + 0.5
+            img = np.clip(img, 0, 1)
+            ax[i, j].imshow(img)
 
     label = 'Epoch {0}'.format(num_epoch)
     fig.text(0.5, 0.04, label, ha='center')
-    plt.savefig(path)
+
+    if save:
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        if not path.endswith('.png'):
+            path += '.png'
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.85)
+        plt.suptitle('Generated Images', fontsize=16)
+        print("Saving to:", os.path.abspath(path))
+        plt.savefig(path, bbox_inches='tight', dpi=300)
+        print(f"Result saved to {path}")
 
     if show:
         plt.show()
@@ -94,13 +115,14 @@ def show_result(
         plt.close()
 
 
+
 class EMSE:
     """
     Edge map-based shape encoding (EMSE)
     """
 
-    def __init__(self):
-        self.device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
+    def __init__(self, config):
+        self.config = config
 
     def get_edge(
         self,
@@ -126,7 +148,7 @@ class EMSE:
             edge = (edge - 0.5) / 0.5
             edges.append([edge])
         edges = np.array(edges).astype('float32')
-        edges = torch.from_numpy(edges).to(self.device)
+        edges = torch.from_numpy(edges).to(self.config.DEVICE)
         return edges
     
     def rgb2Gray_batch(
@@ -165,7 +187,7 @@ class EMSE:
         info_rec_ave = info_rec.view(batch_size, -1)
         ave = torch.mean(info_rec_ave, dim=1)
         # info = torch.zeros(gray.shape, dtype=torch.float32)
-        tmp = torch.zeros(gray.shape).to(self.device)
+        tmp = torch.zeros(gray.shape).to(self.config.DEVICE)
         for b in range(input.shape[0]):
             tmp[b] = ave[b]
         info = torch.where(info_rec > tmp, 1.0, 0.0)
@@ -199,7 +221,7 @@ class EMSE:
 
         # get the final edge map
         edgeMap = robustCanny + selfInfoMap
-        edgeMap = torch.cat([edgeMap, edgeMap, edgeMap], 1).detach().to(self.device)
+        edgeMap = torch.cat([edgeMap, edgeMap, edgeMap], 1).detach().to(self.config.DEVICE)
 
         return edgeMap
     
@@ -210,8 +232,8 @@ class TSD:
     TPS - Thin-plate spline
     """
 
-    def __init__(self):
-        self.device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
+    def __init__(self, config):
+        self.config = config
 
     def grid_sample(
         self,
@@ -219,11 +241,11 @@ class TSD:
         grid,
         canvas=None
     ):
-        output = F.grid_sample(input, grid, align_corners=True).to(self.device)
+        output = F.grid_sample(input, grid, align_corners=True).to(self.config.DEVICE)
         if canvas is None:
             return output
         else:
-            input_mask = Variable(input.data.new(input.size()).fill_(1).to(self.device))
+            input_mask = Variable(input.data.new(input.size()).fill_(1).to(self.config.DEVICE))
             output_mask = F.grid_sample(input_mask, grid, align_corners=True)
             padded_output = output * output_mask + canvas * (1 - output_mask)
             return padded_output
@@ -240,14 +262,14 @@ class TSD:
             target_control_points = torch.Tensor(list(itertools.product(
                 torch.arange(-1.0, 1.00001, 2.0 / 4),
                 torch.arange(-1.0, 1.00001, 2.0 / 4),
-            ))).to(self.device)
-            source_control_points = target_control_points + torch.Tensor(target_control_points.size()).uniform_(-0.1, 0.1).to(self.device)
+            ))).to(self.config.DEVICE)
+            source_control_points = target_control_points + torch.Tensor(target_control_points.size()).uniform_(-0.1, 0.1).to(self.config.DEVICE)
             # source_control_points = target_control_points + 0.01*torch.ones(target_control_points.size()).to(device)
-            tps = TPSGridGen(height, width, target_control_points)
+            tps = TPSGridGen(self.config, height, width, target_control_points)
             source_coordinate = tps(Variable(torch.unsqueeze(source_control_points, 0)))
 
             grid = source_coordinate.view(1, height, width, 2)
-            canvas = Variable(torch.Tensor(1, 3, height, width).fill_(1.0)).to(self.device)
+            canvas = Variable(torch.Tensor(1, 3, height, width).fill_(1.0)).to(self.config.DEVICE)
             target_image = self.grid_sample(img, grid, canvas)
             tps_img.append(target_image)
         tps_img = torch.cat(tps_img, dim=0)
@@ -267,8 +289,8 @@ class TSG:
     Texture and shape-based generation (TSG)
     """
 
-    def __init__(self):
-        self.device = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
+    def __init__(self, config):
+        self.config = config
 
     def blur_image(
         self,
@@ -308,7 +330,7 @@ class TSG:
         deformedImg,
         blurImg
     ):
-        z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(self.device))
+        z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(self.config.DEVICE))
 
         G_result = netG(z_, deformedImg, blurImg)
 
