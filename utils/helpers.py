@@ -40,12 +40,16 @@ def get_config(file_path):
     config["SHOW_IMAGES"] = config["show_images"]
     config["SHOW_IMAGES_INTERVAL"] = config["show_images_interval"]
 
+    config["LOG_INTERVAL"] = config["log_interval"]
+
     config["DEBUG_MODE"] = config["debug_mode"]
     config["DEBUG_ITERS_START"] = config["debugIterations_strt"]
     config["DEBUG_ITERS_AMOUNT"] = config["debugIterations_amount"]
     config["LR_GEN"] = config["learning_rate"]["generator"]
     config["LR_DISC"] = config["learning_rate"]["discriminator"]
     config["LR_CLS"] = config["learning_rate"]["classifier"]
+
+    config["SAVE_PATH"] = config["save_path"]
 
     return SimpleNamespace(**config)
 
