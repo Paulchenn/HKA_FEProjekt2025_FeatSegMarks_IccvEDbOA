@@ -21,6 +21,7 @@ from torchvision import transforms
 from torch import amp
 
 
+
 class EMSE:
     """
     Edge map-based shape encoding (EMSE)
