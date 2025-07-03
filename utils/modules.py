@@ -2,6 +2,7 @@ import json
 import numpy as np
 import itertools
 import pdb
+import os
 
 from skimage.color import rgb2gray
 from skimage.feature import canny
@@ -63,36 +64,56 @@ def show_result(
     deformedImg,
     show=False,
     save=False,
-    path='result.png',
+    path='Result/result.png',
     *,
     device=device,
     netG
 ):
-    zz = torch.randn(64, 100, 1, 1).to(device)
+    mn_batch = edgeMap.shape[0]
+
+    zz = torch.randn(mn_batch, 100, 1, 1).to(device)
     netG.eval()
     test_images = netG(zz, edgeMap, deformedImg)
     netG.train()
 
-    size_figure_grid = 8
+    size_figure_grid = int(np.ceil(np.sqrt(mn_batch)))
     fig, ax = plt.subplots(size_figure_grid, size_figure_grid, figsize=(5, 5))
     for i, j in itertools.product(range(size_figure_grid), range(size_figure_grid)):
         ax[i, j].get_xaxis().set_visible(False)
         ax[i, j].get_yaxis().set_visible(False)
 
-    for k in range(64):
-        i = k // 8
-        j = k % 8
-        ax[i, j].cla()
-        ax[i, j].imshow(np.transpose(test_images[k].cpu().data.numpy(), (1, 2, 0)))
+    for k in range(mn_batch):
+        i = k // size_figure_grid
+        j = k % size_figure_grid
+        if i < size_figure_grid and j < size_figure_grid:
+            ax[i, j].cla()
+            img = test_images[k].cpu().data.numpy()
+            img = np.transpose(img, (1, 2, 0))
+            img = (img * 0.5) + 0.5
+            img = np.clip(img, 0, 1)
+            ax[i, j].imshow(img)
 
     label = 'Epoch {0}'.format(num_epoch)
     fig.text(0.5, 0.04, label, ha='center')
-    plt.savefig(path)
+
+    if save:
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        if not path.endswith('.png'):
+            path += '.png'
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.85)
+        plt.suptitle('Generated Images', fontsize=16)
+        print("Saving to:", os.path.abspath(path))
+        plt.savefig(path, bbox_inches='tight', dpi=300)
+        print(f"Result saved to {path}")
 
     if show:
         plt.show()
     else:
         plt.close()
+
 
 
 class EMSE:
