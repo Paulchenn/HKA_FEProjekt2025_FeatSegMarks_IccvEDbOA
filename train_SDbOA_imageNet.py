@@ -14,6 +14,14 @@ from utils.modules  import *
 from utils.helpers import *
 from collections import deque
 
+def create_saveFolder(save_path):
+    """
+    Creates a save folder for the results if it does not exist.
+    """
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+        
+
 # Path of the current script
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # Path to the config directory
@@ -179,7 +187,7 @@ if __name__ == "__main__":
             # <<< TSG ===
 
             # Print loss values after every 5 iterations
-            if i % 5 == 0:
+            if i % config.LOG_INTERVAL == 0:
                 print('Epoch[', epoch + 1, '/', config.EPOCHS, '][', i + 1, '/', len(train_loader), ']: TOTAL_LOSS', loss_tot.item())
 
             # For debugging: Stop after a certain number of iterations
@@ -187,22 +195,36 @@ if __name__ == "__main__":
                 break
 
         # Save the results and models afer every epochs
-        path2save = './Result/cifar_gan/visualization'
-        fixed_p = path2save + '/' + str(epoch) + '.png'
-        if not os.path.exists(path2save):
-            os.makedirs(path2save)
+        # Create a directory to save the results
+        folder2save_epochImg = os.path.join(config.SAVE_PATH, 'visualization')
+        create_saveFolder(folder2save_epochImg)  # Create folder to save epoch images
+        num_digits = len(str(config.EPOCHS))
+        path2save_epochImg = os.path.join(folder2save_epochImg, f'Epoch_{epoch+1:0{num_digits}d}.png')  # Path to save the results
+        
         try:
             show_result(  # Shows the result of actual epoch
                 epoch,
                 EDGE_MAP_TEST,
                 DEFORMED_IMG_TEST,
-                path=fixed_p,
-                netG=netG
+                path=path2save_epochImg,
+                netG=netG,
+                show=False,
+                save=True
             )
         except IndexError as e:
             print(f"IndexError: {e}")
-        torch.save(netG.state_dict(), './Result/cifar_gan/tuned_G_' + str(epoch) + '.pth')  # Saves Generator
-        torch.save(netD.state_dict(), './Result/cifar_gan/tuned_D_' + str(epoch) + '.pth')  # Saves Diskriminator
+        
+        # Save the Generator models after every epoch
+        folder2save_tunedG = os.path.join(config.SAVE_PATH, 'tuned_G')
+        create_saveFolder(folder2save_tunedG)  # Create folder to save tuned Generator
+        path2save_tunedG = os.path.join(folder2save_tunedG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+        torch.save(netG.state_dict(), path2save_tunedG)  # Saves Generator
+
+        # Save the Discriminator models after every epoch
+        folder2save_tunedD = os.path.join(config.SAVE_PATH, 'tuned_D')
+        create_saveFolder(folder2save_tunedD)  # Create folder to save tuned Discriminator
+        path2save_tunedD = os.path.join(folder2save_tunedD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+        torch.save(netD.state_dict(), path2save_tunedD)  # Saves Diskriminator
 
         # === Validation Phase ===
         # Fuer FPS-Messung: Startzeit erfassen
@@ -299,4 +321,4 @@ if __name__ == "__main__":
         writer.writeheader()
         writer.writerows(epoch_metrics)
 
-    print(f"[INFO] Epoch-Metriken gespeichert unter: {csv_output_path}")
+    print(f"[INFO] Saved Epoch-Metrics at: {csv_output_path}")
