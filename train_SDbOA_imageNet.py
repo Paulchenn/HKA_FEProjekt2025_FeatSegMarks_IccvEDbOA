@@ -84,6 +84,37 @@ if __name__ == "__main__":
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE)             # Discriminator to distinguish real/fake images
     cls     = ResNet18(BasicBlock, num_classes=config.NUM_CLASSES).to(config.DEVICE)   # Classifier (here: ResNet-18)
+    
+    # === Load checkpoints
+    if os.path.exists(config.PATH_TUNED_G):
+        checkpoint = torch.load(config.PATH_TUNED_G, map_location=config.DEVICE)
+        model_dict = netG.state_dict()
+        filtered_dict = {
+            k: v for k, v in checkpoint.items()
+            if k in model_dict and v.shape == model_dict[k].shape
+        }
+        skipped = [k for k in checkpoint if k not in filtered_dict]
+        print(f"Not loaded Layer (due to conflicts in name and dimension):")
+        for k in skipped:
+            print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape})")
+        model_dict.update(filtered_dict)
+        netG.load_state_dict(model_dict)
+        print(f"Loaded Generator checkpoint from {config.PATH_TUNED_G}")
+
+    if os.path.exists(config.PATH_TUNED_D):
+        checkpoint = torch.load(config.PATH_TUNED_D, map_location=config.DEVICE)
+        model_dict = netD.state_dict()
+        filtered_dict = {
+            k: v for k, v in checkpoint.items()
+            if k in model_dict and v.shape == model_dict[k].shape
+        }
+        skipped = [k for k in checkpoint if k not in filtered_dict]
+        print(f"Not loaded Layer (due to conflicts in name and dimension):")
+        for k in skipped:
+            print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
+        model_dict.update(filtered_dict)
+        netD.load_state_dict(model_dict)
+        print(f"Loaded Discriminator checkpoint from {config.PATH_TUNED_D}")
 
     # === Initialize optimizers ===
     optimG = optim.Adam(netG.parameters(), lr=config.LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
@@ -233,11 +264,24 @@ if __name__ == "__main__":
         path2save_tunedG = os.path.join(folder2save_tunedG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(netG.state_dict(), path2save_tunedG)  # Saves Generator
 
+        # Save the Generator optimizer after every epoch
+        folder2save_optimG = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_G')
+        create_saveFolder(folder2save_optimG)  # Create folder to save tuned Generator
+        path2save_optimG = os.path.join(folder2save_optimG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+        torch.save(optimG.state_dict(), path2save_optimG)
+
+
         # Save the Discriminator models after every epoch
         folder2save_tunedD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'tuned_D')
         create_saveFolder(folder2save_tunedD)  # Create folder to save tuned Discriminator
         path2save_tunedD = os.path.join(folder2save_tunedD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(netD.state_dict(), path2save_tunedD)  # Saves Diskriminator
+
+        # Save the Discriminator optimizer after every epoch
+        folder2save_optimD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_D')
+        create_saveFolder(folder2save_optimD)  # Create folder to save tuned Generator
+        path2save_optimG = os.path.join(folder2save_optimD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+        torch.save(optimG.state_dict(), path2save_optimG)
 
         # === Validation Phase ===
         # Fuer FPS-Messung: Startzeit erfassen
