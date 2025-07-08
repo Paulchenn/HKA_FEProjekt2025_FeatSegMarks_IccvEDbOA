@@ -14,6 +14,7 @@
   "device": "cuda",
   "batch_size": 10,
   "epochs": 500,
+  "num_workers": 8,
 
   "path_tuned_D": "false./Result/20250729_131300/ImageNet256/tuned_D/Epoch_051.pth",
   "path_tuned_G": "false./Result/20250729_131300/ImageNet256/tuned_G/Epoch_051.pth",
@@ -35,6 +36,11 @@
 
   "image_size": 128,
   "generator_input_dim": 64,
+
+  "image_size": 128,
+  "generator_input_dim": 64,
+
+  "save_path": "./Result",
 
   "dataset": {
     "name": "ImageNet256",
