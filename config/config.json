@@ -4,9 +4,12 @@
   "epochs": 500,
   "num_workers": 8,
 
+  "path_tuned_D": "",
+  "path_tuned_G": "",
+
   "learning_rate": {
-    "generator": 0.0001,
-    "discriminator": 0.0001,
+    "generator": 0.00001,
+    "discriminator": 0.00001,
     "classifier": 0.001
   },
 
