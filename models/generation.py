@@ -25,7 +25,7 @@ class generator(nn.Module):
         self.conv2_1 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv2_2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
         self.maxpool2 = nn.MaxPool2d(kernel_size=2)
-        self.conv3_1 = nn.Conv2d(64, 256, kernel_size=3, stride=1, padding=1)
+        self.conv3_1 = nn.Conv2d(64, d*2, kernel_size=3, stride=1, padding=1)
 
         self.conv1_1col = nn.Conv2d(3, 32, kernel_size=3, padding=1)
         self.conv1_2col = nn.Conv2d(32, 32, kernel_size=3, padding=1)
@@ -33,8 +33,8 @@ class generator(nn.Module):
         self.conv2_1col = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv2_2col = nn.Conv2d(64, 64, kernel_size=3, padding=1)
         self.maxpool2col = nn.MaxPool2d(kernel_size=2)
-        self.conv3_1col = nn.Conv2d(64, 256, kernel_size=3, stride=1, padding=1)
-        self.self_att = MultiheadAttention(embed_dim=256, num_heads=4, batch_first=True)
+        self.conv3_1col = nn.Conv2d(64, d*2, kernel_size=3, stride=1, padding=1)
+        self.self_att = MultiheadAttention(embed_dim=d*2, num_heads=4, batch_first=True)
 
     # weight_init
     def weight_init(self, mean, std):
