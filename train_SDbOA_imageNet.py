@@ -94,9 +94,10 @@ if __name__ == "__main__":
             if k in model_dict and v.shape == model_dict[k].shape
         }
         skipped = [k for k in checkpoint if k not in filtered_dict]
-        print(f"Not loaded Layer (due to conflicts in name and dimension):")
-        for k in skipped:
-            print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape})")
+        if skipped:
+            print(f"Not loaded Layer (due to conflicts in name and dimension):")
+            for k in skipped:
+                print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape})")
         model_dict.update(filtered_dict)
         netG.load_state_dict(model_dict)
         print(f"Loaded Generator checkpoint from {config.PATH_TUNED_G}")
@@ -109,9 +110,10 @@ if __name__ == "__main__":
             if k in model_dict and v.shape == model_dict[k].shape
         }
         skipped = [k for k in checkpoint if k not in filtered_dict]
-        print(f"Not loaded Layer (due to conflicts in name and dimension):")
-        for k in skipped:
-            print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
+        if skipped:
+            print(f"Not loaded Layer (due to conflicts in name and dimension):")
+            for k in skipped:
+                print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
         model_dict.update(filtered_dict)
         netD.load_state_dict(model_dict)
         print(f"Loaded Discriminator checkpoint from {config.PATH_TUNED_D}")
@@ -120,6 +122,12 @@ if __name__ == "__main__":
     optimG = optim.Adam(netG.parameters(), lr=config.LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
     optimD = optim.Adam(netD.parameters(), lr=config.LR_DISC, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
     optimC = optim.Adam(cls.parameters(), lr=config.LR_CLS, betas=(0., 0.99))      # Optimizer for Classifier (GAN-typical Betas)
+
+    if os.path.exists(config.PATH_OPTIM_G):
+        optimG.load_state_dict(torch.load(config.PATH_OPTIM_G))
+
+    if os.path.exists(config.PATH_OPTIM_D):
+        optimD.load_state_dict(torch.load(config.PATH_OPTIM_D))
 
     # === Initialize loss functions === 
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
@@ -280,8 +288,8 @@ if __name__ == "__main__":
         # Save the Discriminator optimizer after every epoch
         folder2save_optimD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_D')
         create_saveFolder(folder2save_optimD)  # Create folder to save tuned Generator
-        path2save_optimG = os.path.join(folder2save_optimD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-        torch.save(optimG.state_dict(), path2save_optimG)
+        path2save_optimD = os.path.join(folder2save_optimD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+        torch.save(optimG.state_dict(), path2save_optimD)
 
         # === Validation Phase ===
         # Fuer FPS-Messung: Startzeit erfassen
