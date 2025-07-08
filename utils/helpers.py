@@ -31,6 +31,9 @@ def get_config(file_path):
     config["EPOCHS"] = config["epochs"]
     config["NUM_WORKERS"] = config["num_workers"]
 
+    config["PATH_TUNED_D"] = config["path_tuned_D"]
+    config["PATH_TUNED_G"] = config["path_tuned_G"]
+
     config["IMG_SIZE"] = config["image_size"]
     config["GEN_IN_DIM"] = config["generator_input_dim"]
 
