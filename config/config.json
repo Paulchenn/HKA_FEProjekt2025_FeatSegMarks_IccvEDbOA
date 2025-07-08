@@ -1,11 +1,13 @@
 {
   "device": "cuda",
-  "batch_size": 13,
+  "batch_size": 12,
   "epochs": 500,
   "num_workers": 8,
 
-  "path_tuned_D": "",
-  "path_tuned_G": "",
+  "path_tuned_D": "./Result/2025_07_08__001/ImageNet256/tuned_D/Epoch_001.pth_false",
+  "path_tuned_G": "./Result/2025_07_08__001/ImageNet256/tuned_G/Epoch_001.pth_false",
+  "path_optim_D": "./Result/2025_07_08__001/ImageNet256/optim_D/Epoch_001.pth_false",
+  "path_optim_G": "./Result/2025_07_08__001/ImageNet256/optim_G/Epoch_001.pth_false",
 
   "learning_rate": {
     "generator": 0.00001,
