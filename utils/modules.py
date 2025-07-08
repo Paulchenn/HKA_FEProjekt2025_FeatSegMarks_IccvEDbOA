@@ -62,6 +62,8 @@ def show_result(
     num_epoch,
     edgeMap,
     deformedImg,
+    img=None,
+    print_original=False,
     show=False,
     save=False,
     path='Result/result.png',
@@ -71,10 +73,15 @@ def show_result(
 ):
     mn_batch = edgeMap.shape[0]
 
-    zz = torch.randn(mn_batch, 100, 1, 1).to(device)
-    netG.eval()
-    test_images = netG(zz, edgeMap, deformedImg)
-    netG.train()
+    if not print_original:
+        zz = torch.randn(mn_batch, 100, 1, 1).to(device)
+        netG.eval()
+        test_images = netG(zz, edgeMap, deformedImg)
+        netG.train()
+        myTitle = 'Generated Images'
+    else:
+        test_images = img
+        myTitle = 'Original Images'
 
     size_figure_grid = int(np.ceil(np.sqrt(mn_batch)))
     fig, ax = plt.subplots(size_figure_grid, size_figure_grid, figsize=(5, 5))
@@ -104,7 +111,7 @@ def show_result(
             path += '.png'
         plt.tight_layout()
         plt.subplots_adjust(top=0.85)
-        plt.suptitle('Generated Images', fontsize=16)
+        plt.suptitle(myTitle, fontsize=16)
         print("Saving to:", os.path.abspath(path))
         plt.savefig(path, bbox_inches='tight', dpi=300)
         print(f"Result saved to {path}")
@@ -363,8 +370,10 @@ class TSG:
         optimC,
         CE_loss,
         L1_loss,
+        scaler,
         downSize=12
     ):
+        # pdb.set_trace()
         mn_batch = img.shape[0]
         
         # blur image to minimize impact of texture
@@ -386,9 +395,9 @@ class TSG:
         # Compute the whole loss of discriminator
         D_loss = D_result_realImg + D_result_genImg + 0.5 * D_celoss
         # Calculate gradient of discriminator
-        D_loss.backward()
+        scaler.scale(D_loss).backward() #D_loss.backward()
         # Update the discriminator by calling optimizer
-        optimD.step()
+        scaler.step(optimD) #optimD.step()
 
         # === Generator training (part 1)===
         # Zero the gradients of generator
@@ -421,11 +430,13 @@ class TSG:
         # Compute the whole loss of generator
         G_loss_tot = G_L1_loss - D_result_genImg + 0.5 * G_celoss + edge_loss + cls_loss
         # Calculate gradient of generator
-        G_loss_tot.backward()
+        scaler.scale(G_loss_tot).backward() #G_loss_tot.backward()
         # Update the generator by calling optimizer
-        optimG.step()
+        scaler.step(optimG) #optimG.step()
 
-        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, G_loss_tot
+        scaler.update()
+
+        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, G_loss_tot, scaler
         
     def doTSG_testing(
         self,
