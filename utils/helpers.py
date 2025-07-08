@@ -10,29 +10,30 @@ from collections import deque
 from types import SimpleNamespace
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
+from datetime import datetime
 
 
 def get_config(file_path):
     """
     Reads a configuration file and returns the configuration as a dictionary.
-    
+
     Args:
         file_path (str): Path to the configuration file.
-        
-    Returns:
-        dict: Configuration parameters.
-    """
 
+    Returns:
+        SimpleNamespace: Configuration parameters as attributes.
+    """
     with open(file_path, 'r') as f:
         config = json.load(f)
 
     config["DEVICE"] = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
     config["BATCH_SIZE"] = config["batch_size"]
     config["EPOCHS"] = config["epochs"]
+    config["NUM_WORKERS"] = config["num_workers"]
 
     config["IMG_SIZE"] = config["image_size"]
     config["GEN_IN_DIM"] = config["generator_input_dim"]
-    config["NUM_CLASSES"] = config["num_classes"]
+
     config["PATIENCE"] = config["patience"]
     config["acc_history"] = deque(maxlen=config["patience"])
     config["MIN_SLOPE"] = config["min_slope"]
@@ -49,7 +50,13 @@ def get_config(file_path):
     config["LR_DISC"] = config["learning_rate"]["discriminator"]
     config["LR_CLS"] = config["learning_rate"]["classifier"]
 
-    config["SAVE_PATH"] = config["save_path"]
+    config["DATASET_NAME"] = config["dataset"]["name"]
+    config["NUM_CLASSES"] = config["dataset"]["num_classes"]
+    config["CLASS_NAMES"] = list(config["dataset"]["SELECTED_SYNSETS"].values())
+    config["SELECTED_SYNSETS"] = config["dataset"]["SELECTED_SYNSETS"]
+
+    today_str = datetime.today().strftime('%Y_%m_%d')
+    config["SAVE_PATH"] = os.path.join(config["save_path"], today_str)
 
     return SimpleNamespace(**config)
 
@@ -106,32 +113,45 @@ def get_tiny_imagenet_loaders(
 
 
 def get_train_val_loaders(
-    data_dir,
-    transform_train,
-    transform_val,
-    batch_size=64,
-    val_split=0.2,
-    num_workers=4,
-    pin_memory=True,
-    seed=42
-):
+        config,
+        data_dir,
+        transform_train,
+        transform_val,
+        val_split=0.2,
+        pin_memory=True,
+        seed=42
+    ):
     """
     Splits the dataset in data_dir into train and validation sets and returns their DataLoaders.
     Applies transform_train to train set and transform_val to val set.
     """
 
+    selected_classes = set(config.CLASS_NAMES)
+
     # Load the full dataset with a dummy transform (will be replaced per split)
     # Load the full dataset with no transform (we'll apply transforms per split)
     full_dataset = datasets.ImageFolder(data_dir, transform=transform_val)
-    total_size = len(full_dataset)
+
+    # Map class name to index in ImageFolder
+    class_to_idx = {v: k for k, v in full_dataset.class_to_idx.items()}
+    selected_indices = [idx for idx, classname in class_to_idx.items() if classname in selected_classes]
+    #selected_indices = [class_to_idx[name] for name in selected_classes if name in class_to_idx]
+
+    # Filter images to only include selected class indices
+    filtered_indices = [i for i, (_, label) in enumerate(full_dataset.samples) if label in selected_indices]
+    filtered_dataset = Subset(full_dataset, filtered_indices)
+
+    # Now split filtered dataset
+    total_size = len(filtered_dataset)
     val_size = int(val_split * total_size)
     train_size = total_size - val_size
 
     train_subset, val_subset = random_split(
-        full_dataset, [train_size, val_size],
+        filtered_dataset, [train_size, val_size],
         generator=torch.Generator().manual_seed(seed)
     )
 
+    # Subset class that allows individual transforms
     class SubsetWithTransform(Subset):
         def __init__(self, subset, transform):
             super().__init__(subset.dataset, subset.indices)
@@ -141,16 +161,18 @@ def get_train_val_loaders(
             if self.transform is not None:
                 img = self.transform(img)
             return img, label
-
+        
     train_dataset = SubsetWithTransform(train_subset, transform_train)
     val_dataset = SubsetWithTransform(val_subset, transform_val)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-                             num_workers=num_workers, pin_memory=pin_memory)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-                            num_workers=num_workers, pin_memory=pin_memory)
+    train_dataset.dataset.classes = list(selected_classes)
+    val_dataset.dataset.classes = list(selected_classes)
 
-
+    train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True,
+                              num_workers=config.NUM_WORKERS, pin_memory=pin_memory)
+    val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=False,
+                            num_workers=config.NUM_WORKERS, pin_memory=pin_memory)
+    
     # After creating the loaders
     print(f"Train loader batches: {len(train_loader)}")
     print(f"Val loader batches: {len(val_loader)}")
@@ -162,6 +184,7 @@ def get_train_val_loaders(
     img_val, label_val = next(iter(val_loader))
     print("Val batch shape:", img_val.shape, "Labels:", label_val)
 
+    #pdb.set_trace()  # Start debugging
     print("Number of images in train_loader:", len(train_loader.dataset))
     print("Number of classes in train_loader:", len(train_loader.dataset.dataset.classes))
     print("Number of images in val_loader:", len(val_loader.dataset))
