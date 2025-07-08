@@ -7,7 +7,7 @@ import torch
 from torch import nn, optim
 
 from torchvision import transforms
-from utils.get_ImageNet import main as get_ImageNet
+#from utils.get_ImageNet import main as get_ImageNet
 from models import generation
 from models.resnet import ResNet18, BasicBlock
 from utils.modules  import *
@@ -65,15 +65,15 @@ if __name__ == "__main__":
         os.path.dirname(
             os.path.dirname(cwd)
         ),
-        "data/ImageNet256"  # Path to the ImageNet dataset
+        "data",
+        config.DATASET_NAME
     )
     print(f"Root directory for ImageNet 256: {root}")
     train_loader, val_loader = get_train_val_loaders(
+        config,
         data_dir=root,
         transform_train=transform_train,
         transform_val=transform_val,
-        batch_size=config.BATCH_SIZE,
-        num_workers=4,
         pin_memory=True
     )
     
@@ -94,6 +94,13 @@ if __name__ == "__main__":
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
     CE_loss = nn.CrossEntropyLoss()      # Classification Loss (for multi-class outputs like CIFAR-10 Classes)
 
+
+    # === Create a directory to save the results ===
+    folder2save_epochImg = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'visualization')
+    create_saveFolder(folder2save_epochImg)  # Create folder to save epoch images
+    num_digits = len(str(config.EPOCHS))
+    path2save_epochImg = os.path.join(folder2save_epochImg, f'originalImages.png')  # Path to save the results
+    
     # === Create one batch of test data ===
     for i, (img, label) in enumerate(val_loader):
         img     = img.to(config.DEVICE)
@@ -112,20 +119,33 @@ if __name__ == "__main__":
         DEFORMED_IMG_TEST = tsd.doTSD(img)
         # <<< TSD ===
 
+        # === Show images depending on configuration ===
+        show_result(  # Shows the result of actual epoch
+            -1,  # -1 means no epoch number
+            img,
+            EDGE_MAP_TEST,
+            DEFORMED_IMG_TEST,
+            path=path2save_epochImg,
+            print_original=True,
+            show=False,
+            save=True,
+            netG=netG,
+        )
+
         break
     
     # Liste zum Speichern der Metriken
     epoch_metrics = []
 
     # Zielordner mit aktuellem Datum anlegen
-    run_date = datetime.now().strftime("%Y-%m-%d")
-    csv_output_dir = os.path.join("Result", "epoch_metrics", run_date)
+    csv_output_dir = os.path.join(config.SAVE_PATH, "epoch_metrics")
     os.makedirs(csv_output_dir, exist_ok=True)
 
     # Pfad zur CSV-Datei
     csv_output_path = os.path.join(csv_output_dir, "SDbOA_metrics.csv")
-
     
+    
+   
     ##### ===== TRAINING ===== #####
     for epoch in range(config.EPOCHS):
         print(epoch)
@@ -144,47 +164,45 @@ if __name__ == "__main__":
             for param_group in optimC.param_groups:
                 param_group['lr'] = config.LR_CLS / 10
 
+        # Initialize GradScaler for mixed precision training
+        scaler = torch.amp.GradScaler()
+        start = time.time()  # Start time for iteration
         for i, (img, label) in enumerate(train_loader):
+            # pdb.set_trace()  # Start debugging
+
             # For Debugging
             if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
                 continue
 
-            img     = img.to(config.DEVICE)
-            label   = label.to(config.DEVICE)
+            if i==10:
+                print("Time taken for 10 iterations: ", round(time.time() - start, 2), " s")
+                print("Epoch will roughly take: ", round((time.time() - start)/10 * len(train_loader) / 60, 2), " min")
 
-            # === EMSE >>>
-            edgeMap = emse.doEMSE(img)
-            # <<< EMSE ===
+            img = img.to(config.DEVICE, non_blocking=True)
+            label = label.to(config.DEVICE, non_blocking=True)
+            with torch.amp.autocast(config.DEVICE.type):
+                # === EMSE >>>
+                edgeMap = emse.doEMSE(img)
+                # <<< EMSE ===
 
-            # === TSD >>>
-            deformedImg = tsd.doTSD(edgeMap)
-            # <<< TSD ===
+                # === TSD >>>
+                deformedImg = tsd.doTSD(edgeMap)
+                # <<< TSD ===
 
-            # === Show images depending on configuration ===
-            if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
-                show_images(
-                    img,
-                    deformedImg,
-                    edgeMap
+                # === Show images depending on configuration ===
+                if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
+                    show_images(
+                        img,
+                        deformedImg,
+                        edgeMap
+                    )
+
+                # === TSG >>>
+                netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler = tsg.doTSG_training(
+                    emse, tsd, img, label, deformedImg, netD, netG, cls,
+                    optimD, optimG, optimC, CE_loss, L1_loss, scaler
                 )
-
-            # === TSG >>>
-            netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot = tsg.doTSG_training(
-                emse,
-                tsd,
-                img,
-                label,
-                deformedImg,
-                netD,
-                netG,
-                cls,
-                optimD,
-                optimG,
-                optimC,
-                CE_loss,
-                L1_loss,
-            )
-            # <<< TSG ===
+                # <<< TSG ===
 
             # Print loss values after every 5 iterations
             if i % config.LOG_INTERVAL == 0:
@@ -195,12 +213,7 @@ if __name__ == "__main__":
                 break
 
         # Save the results and models afer every epochs
-        # Create a directory to save the results
-        folder2save_epochImg = os.path.join(config.SAVE_PATH, 'visualization')
-        create_saveFolder(folder2save_epochImg)  # Create folder to save epoch images
-        num_digits = len(str(config.EPOCHS))
         path2save_epochImg = os.path.join(folder2save_epochImg, f'Epoch_{epoch+1:0{num_digits}d}.png')  # Path to save the results
-        
         try:
             show_result(  # Shows the result of actual epoch
                 epoch,
@@ -215,13 +228,13 @@ if __name__ == "__main__":
             print(f"IndexError: {e}")
         
         # Save the Generator models after every epoch
-        folder2save_tunedG = os.path.join(config.SAVE_PATH, 'tuned_G')
+        folder2save_tunedG = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'tuned_G')
         create_saveFolder(folder2save_tunedG)  # Create folder to save tuned Generator
         path2save_tunedG = os.path.join(folder2save_tunedG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(netG.state_dict(), path2save_tunedG)  # Saves Generator
 
         # Save the Discriminator models after every epoch
-        folder2save_tunedD = os.path.join(config.SAVE_PATH, 'tuned_D')
+        folder2save_tunedD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'tuned_D')
         create_saveFolder(folder2save_tunedD)  # Create folder to save tuned Discriminator
         path2save_tunedD = os.path.join(folder2save_tunedD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(netD.state_dict(), path2save_tunedD)  # Saves Diskriminator
@@ -238,87 +251,93 @@ if __name__ == "__main__":
         correct = torch.zeros(1).squeeze().to(device)
         total   = torch.zeros(1).squeeze().to(device)
 
-        for i, (img, label) in enumerate(val_loader):
-            # For Debugging
-            if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
-                continue
+        # Only validate every N epochs
+        if epoch % 5 == 0:
+            print(f"Validating at epoch {epoch + 1}/{config.EPOCHS}...")
+            with torch.no_grad():
+                for i, (img, label) in enumerate(val_loader):
+                    # For Debugging
+                    if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
+                        continue
 
-            img     = img.to(config.DEVICE)
-            label   = label.to(config.DEVICE)
+                    img     = img.to(config.DEVICE)
+                    label   = label.to(config.DEVICE)
 
-            # === EMSE >>>
-            edgeMap = emse.doEMSE(img)
-            # <<< EMSE ===
+                    # === EMSE >>>
+                    edgeMap = emse.doEMSE(img)
+                    # <<< EMSE ===
 
-            # === TSD >>>
-            # TSD module is not used in the validation phase
-            # --> no deformation of the image
-            # deformed image is the same as edge map
-            deformedImg = edgeMap
-            # <<< TSD ===
+                    # === TSD >>>
+                    # TSD module is not used in the validation phase
+                    # --> no deformation of the image
+                    # deformed image is the same as edge map
+                    deformedImg = edgeMap
+                    # <<< TSD ===
 
-            # === Generation and Classification >>>
-            prediction = tsg.doTSG_testing(
-                img,
-                deformedImg,
-                netG,
-                cls
-            )
-            # <<< Generation and Classification ===
+                    # === Generation and Classification >>>
+                    prediction = tsg.doTSG_testing(
+                        img,
+                        deformedImg,
+                        netG,
+                        cls
+                    )
+                    # <<< Generation and Classification ===
 
-            # Count correct predictions and total predictions
-            correct += (prediction == label).sum().float()
-            total += len(label)
+                    # Count correct predictions and total predictions
+                    correct += (prediction == label).sum().float()
+                    total += len(label)
 
-            # For debuging (Training of even one Epoch takes very long)
-            if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START+config.DEBUG_ITERS_AMOUNT:
-                break
+                    # For debuging (Training of even one Epoch takes very long)
+                    if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START+config.DEBUG_ITERS_AMOUNT:
+                        break
 
-        # Calculate accuracy, append to history and print
-        acc = (correct / total).cpu().detach().data.numpy()
-        config.acc_history.append(acc)
-        print('Epoch: ', epoch + 1, ' test accuracy: ', acc)
+                # Calculate accuracy, append to history and print
+                acc = (correct / total).cpu().detach().data.numpy()
+                config.acc_history.append(acc)
+                print('Epoch: ', epoch + 1, ' test accuracy: ', acc)
 
-        if acc > best_acc:
-            best_acc = acc
-            print('Improvement, best accuracy: ', acc)
-            torch.save(cls.state_dict(), './Result/best_cls.pth')
-        else:
-            print('No improvement, best accuracy: ', best_acc)
-        
-        val_end_time = time.time()
-        val_duration = val_end_time - val_start_time
-        fps = float(total.cpu()) / val_duration
-        print(f"Validation Inference Speed: {fps:.2f} FPS")
+                if acc > best_acc:
+                    best_acc = acc
+                    print('Improvement, best accuracy: ', acc)
+                    torch.save(cls.state_dict(), './Result/best_cls.pth')
+                else:
+                    print('No improvement, best accuracy: ', best_acc)
+                
+                val_end_time = time.time()
+                val_duration = val_end_time - val_start_time
+                fps = float(total.cpu()) / val_duration
+                print(f"Validation Inference Speed: {fps:.2f} FPS")
 
-        # === Speichere Metriken dieser Epoche ===
-        epoch_metric = {
-            "epoch": epoch + 1,
-            "accuracy": round(float(acc), 4),
-            "loss_total": round(float(loss_tot.item()), 4),
-            "FPS": round(fps, 2),
-            "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
-            "MMA@3": None,
-            "HomographyAcc": None
-        }
-        epoch_metrics.append(epoch_metric)
+                # === Speichere Metriken dieser Epoche ===
+                epoch_metric = {
+                    "epoch": epoch + 1,
+                    "accuracy": round(float(acc), 4),
+                    "loss_total": round(float(loss_tot.item()), 4),
+                    "FPS": round(fps, 2),
+                    "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
+                    "MMA@3": None,
+                    "HomographyAcc": None
+                }
+                epoch_metrics.append(epoch_metric)
 
 
-        # Early stopping
-        if len(config.acc_history) >= config.PATIENCE:
-            slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
-            print(f"Slope of accuracy trend: {slope:.6f}")
-            if slope < config.MIN_SLOPE:
-                print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
-                break
-    
+                # Early stopping
+                if len(config.acc_history) >= config.PATIENCE:
+                    slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
+                    print(f"Slope of accuracy trend: {slope:.6f}")
+                    if slope < config.MIN_SLOPE:
+                        print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
+                        break
 
-    # === Schreibe alle Metriken als CSV-Datei ===
-    csv_fields = epoch_metrics[0].keys() if epoch_metrics else []
+                # === Schreibe alle Metriken als CSV-Datei ===
+                csv_fields = epoch_metrics[0].keys() if epoch_metrics else []
 
-    with open(csv_output_path, mode='w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
-        writer.writeheader()
-        writer.writerows(epoch_metrics)
+                with open(csv_output_path, mode='w', newline='') as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
+                    writer.writeheader()
+                    writer.writerows(epoch_metrics)
 
-    print(f"[INFO] Saved Epoch-Metrics at: {csv_output_path}")
+                print(f"[INFO] Saved Epoch-Metrics at: {csv_output_path}")
+
+
+        print('Epoch[', epoch + 1, '/', config.EPOCHS, '][', i + 1, '/', len(train_loader), ']: TOTAL_LOSS', loss_tot.item())
