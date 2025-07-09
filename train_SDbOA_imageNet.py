@@ -10,6 +10,7 @@ from torchvision import transforms
 #from utils.get_ImageNet import main as get_ImageNet
 from models import generation
 from models.resnet import ResNet18, BasicBlock
+import torchvision.models as models
 from utils.modules  import *
 from utils.helpers import *
 from collections import deque
@@ -83,7 +84,7 @@ if __name__ == "__main__":
     # === Initialize networks (and move to CPU/GPU) ===
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE)             # Discriminator to distinguish real/fake images
-    cls     = ResNet18(BasicBlock, num_classes=config.NUM_CLASSES).to(config.DEVICE)   # Classifier (here: ResNet-18)
+    cls     = models.inception_v3(pretrained=True) # ResNet18(BasicBlock, num_classes=config.NUM_CLASSES).to(config.DEVICE)   # Classifier (here: ResNet-18)
     
     # === Load checkpoints
     if os.path.exists(config.PATH_TUNED_G):
@@ -205,27 +206,31 @@ if __name__ == "__main__":
 
         # Initialize GradScaler for mixed precision training
         scaler = torch.amp.GradScaler()
-        start = time.time()  # Start time for iteration
+        time_Iteration = []  # Start time for iteration
+        time_EMSE = []
+        time_TSD = []
+        time_TSG = []
+        itersForAverageCalc = 10
         for i, (img, label) in enumerate(train_loader):
-            # pdb.set_trace()  # Start debugging
+            time_startIteration = time.time()
 
             # For Debugging
             if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
                 continue
 
-            if i==10:
-                print("Time taken for 10 iterations: ", round(time.time() - start, 2), " s")
-                print("Epoch will roughly take: ", round((time.time() - start)/10 * len(train_loader) / 60, 2), " min")
-
             img = img.to(config.DEVICE, non_blocking=True)
             label = label.to(config.DEVICE, non_blocking=True)
             with torch.amp.autocast(config.DEVICE.type):
                 # === EMSE >>>
+                time_startEMSE = time.time()
                 edgeMap = emse.doEMSE(img)
+                time_EMSE.append(time.time() - time_startEMSE)
                 # <<< EMSE ===
 
                 # === TSD >>>
+                time_startTSD = time.time()
                 deformedImg = tsd.doTSD(edgeMap)
+                time_TSD.append(time.time() - time_startTSD)
                 # <<< TSD ===
 
                 # === Show images depending on configuration ===
@@ -237,14 +242,36 @@ if __name__ == "__main__":
                     )
 
                 # === TSG >>>
-                netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler = tsg.doTSG_training(
+                time_startTSG = time.time()
+                netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler, time_ = tsg.doTSG_training(
                     emse, tsd, img, label, deformedImg, netD, netG, cls,
                     optimD, optimG, optimC, CE_loss, L1_loss, scaler
                 )
+                time_TSG.time_tot.append(time.time() - time_startTSG)
                 # <<< TSG ===
 
+            time_Iteration.append(time.time() - time_startIteration)
+
+            # Calculate times
+            if i==itersForAverageCalc:
+                print("----------")
+                print("Time taken for 10 iterations: ", round(time.time() - sum(time_Iteration), 2), " s")
+                print("Epoch will roughly take: ", round((time.time() - sum(time_Iteration))/itersForAverageCalc * len(train_loader) / 60, 2), " min")
+                print('-----')
+                print(f"Average times after {itersForAverageCalc} iterations:")
+                print("     Iteration:      ", round((time.time() - sum(time_Iteration))/itersForAverageCalc))
+                print("     EMSE:           ", round((time.time() - sum(time_EMSE))/itersForAverageCalc))
+                print("     TSD:            ", round((time.time() - sum(time_TSD))/itersForAverageCalc))
+                print("     TSG (total):    ", round((time.time() - sum(time_TSG.time_tot))/itersForAverageCalc))
+                print("     TSG (trainD):   ", round((time.time() - sum(time_TSG.time_trainD))/itersForAverageCalc))
+                print("     TSG (trainG1):  ", round((time.time() - sum(time_TSG.time_trainG1))/itersForAverageCalc))
+                print("     TSG (trainCls): ", round((time.time() - sum(time_TSG.time_trainCls))/itersForAverageCalc))
+                print("     TSG (trainG2):  ", round((time.time() - sum(time_TSG.time_trainG2))/itersForAverageCalc))
+                print("     TSG (Scaler):   ", round((time.time() - sum(time_TSG.time_Scaler))/itersForAverageCalc))
+                print("----------")
+
             # Print loss values after every 5 iterations
-            if i % config.LOG_INTERVAL == 0:
+            if i % config.LOG_INTERVAL == 0 and i > itersForAverageCalc:
                 print('Epoch[', epoch + 1, '/', config.EPOCHS, '][', i + 1, '/', len(train_loader), ']: TOTAL_LOSS', loss_tot.item())
 
             # For debugging: Stop after a certain number of iterations
@@ -266,6 +293,8 @@ if __name__ == "__main__":
         except IndexError as e:
             print(f"IndexError: {e}")
         
+
+        # === Save Generator and its Optimizer >>>
         # Save the Generator models after every epoch
         folder2save_tunedG = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'tuned_G')
         create_saveFolder(folder2save_tunedG)  # Create folder to save tuned Generator
@@ -277,8 +306,10 @@ if __name__ == "__main__":
         create_saveFolder(folder2save_optimG)  # Create folder to save tuned Generator
         path2save_optimG = os.path.join(folder2save_optimG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(optimG.state_dict(), path2save_optimG)
+        # >>> Save Generator and its Optimizer ===
 
 
+        # === Save Discriminator and its Optimizer >>>
         # Save the Discriminator models after every epoch
         folder2save_tunedD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'tuned_D')
         create_saveFolder(folder2save_tunedD)  # Create folder to save tuned Discriminator
@@ -290,8 +321,10 @@ if __name__ == "__main__":
         create_saveFolder(folder2save_optimD)  # Create folder to save tuned Generator
         path2save_optimD = os.path.join(folder2save_optimD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(optimG.state_dict(), path2save_optimD)
+        # >>> Save Discriminator and its Optimizer ===
 
-        # === Validation Phase ===
+
+        # === VALIDATION ===
         # Fuer FPS-Messung: Startzeit erfassen
         val_start_time = time.time()
 
@@ -304,7 +337,7 @@ if __name__ == "__main__":
         total   = torch.zeros(1).squeeze().to(device)
 
         # Only validate every N epochs
-        if epoch % 5 == 0:
+        if epoch % 1 == 0:
             print(f"Validating at epoch {epoch + 1}/{config.EPOCHS}...")
             with torch.no_grad():
                 for i, (img, label) in enumerate(val_loader):
