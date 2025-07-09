@@ -48,6 +48,8 @@ def get_config(file_path):
 
     config["LOG_INTERVAL"] = config["log_interval"]
 
+    config["TRAIN_CLS"] = config["train_cls"]
+
     config["DEBUG_MODE"] = config["debug_mode"]
     config["DEBUG_ITERS_START"] = config["debugIterations_strt"]
     config["DEBUG_ITERS_AMOUNT"] = config["debugIterations_amount"]
