@@ -253,6 +253,7 @@ class TSG:
         L1_loss,
         time_TSG,
         scaler,
+        time_TSG,
         downSize=12
     ):
         #pdb.set_trace()
@@ -286,6 +287,7 @@ class TSG:
         scaler.scale(loss.stage1_D_loss).backward(retain_graph=True)
         scaler.step(optimD)
         scaler.update()
+        time_TSG.time_Scaler.append(time.time() - time_startScaler)
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
