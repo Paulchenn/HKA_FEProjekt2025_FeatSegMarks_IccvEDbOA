@@ -25,6 +25,8 @@
 
   "downSize": 36,
 
+  "train_cls": true,
+
   "learning_rate": {
     "generator": 0.0002,
     "discriminator": 0.0001,
