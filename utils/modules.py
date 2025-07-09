@@ -3,6 +3,7 @@ import numpy as np
 import itertools
 import pdb
 import os
+import time
 
 from skimage.color import rgb2gray
 from skimage.feature import canny
@@ -299,6 +300,9 @@ class TSG:
     def __init__(self, config):
         self.config = config
 
+    def myNormalize():
+        return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+
     def blur_image(
         self,
         img,
@@ -371,6 +375,7 @@ class TSG:
         CE_loss,
         L1_loss,
         scaler,
+        time_TSG,
         downSize=12
     ):
         # pdb.set_trace()
@@ -388,6 +393,7 @@ class TSG:
         D_result_genImg, _ = self.getDResult(G_result_1, netD)
 
         # === Discriminator training ===
+        time_startTrainD = time.time()
         # Zero the gradients of discriminator
         netD.zero_grad()
         # Compute the classification loss of discriminator
@@ -398,8 +404,10 @@ class TSG:
         scaler.scale(D_loss).backward() #D_loss.backward()
         # Update the discriminator by calling optimizer
         scaler.step(optimD) #optimD.step()
+        time_TSG.time_trainD.append(time.time() - time_startTrainD)
 
         # === Generator training (part 1)===
+        time_startTrainG1 = time.time()
         # Zero the gradients of generator
         netG.zero_grad()
         # Generate new image and get discriminator result
@@ -410,33 +418,51 @@ class TSG:
         G_L1_loss = L1_loss(G_result_2, img_for_loss)
         # Compute the classification loss of generator and sum them up
         G_celoss = CE_loss(aux_output_genImg, label).sum()
+        time_TSG.time_trainG1.append(time.time() - time_startTrainG1)
 
-        # === Classifier training ===
-        # Zero the gradients of classifier
-        cls.zero_grad()
-        # Compute the classification loss of classifier
-        cls_output = cls(G_result_2)
-        cls_loss = CE_loss(cls_output, label)
-        ### ????? >>>>> Classifier optimation missing? <<<<< ????? #####
+        # === Classifier loss ===
+        time_startTrainCls = time.time()
+        if config.TRAIN_CLS:
+            # Classifier only in Evaluation
+            cls.eval()
+            # Resize to 299x299
+            G_result_2_resized = F.interpolate(G_result_2, size=(299, 299), mode='bilinear', align_corners=False)
+            # Normalize (if needed)
+            normalize = self.myNormalize()
+            # If Tensor [B, 1, H, W], duplicate up to 3-Channel
+            if G_result_2_resized.shape[1] == 1:
+                G_result_2_resized = G_result_2_resized.repeat(1, 3, 1, 1)
+            # Apply normalization
+            G_result_2_norm = torch.stack([normalize(img) for img in G_result_2_resized])
+            # Compute the classification loss of classifier
+            cls_output = cls(G_result_2_norm)  # nur logits
+            cls_loss = CE_loss(cls_output, label)
+        time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
 
         # === Generator training (part 2) ===
+        time_startTrainG2 = time.time()
         # Loss of edge information
         combined_gray = tpsImg[:, 0:1, : , :]
         edge_loss = L1_loss(
             emse.get_info(G_result_2),
             combined_gray
         )
-        
         # Compute the whole loss of generator
-        G_loss_tot = G_L1_loss - D_result_genImg + 0.5 * G_celoss + edge_loss + cls_loss
+        if config.TRAIN_CLS:
+            G_loss_tot = G_L1_loss - D_result_genImg + 0.5 * G_celoss + edge_loss + cls_loss
+        else:
+            G_loss_tot = G_L1_loss - D_result_genImg + 0.5 * G_celoss + edge_loss
         # Calculate gradient of generator
         scaler.scale(G_loss_tot).backward() #G_loss_tot.backward()
         # Update the generator by calling optimizer
         scaler.step(optimG) #optimG.step()
-
+        time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
+        
+        time_startScaler = time.time()
         scaler.update()
+        time_TSG.time_Scaler.append(time.time() - time_startScaler)
 
-        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, G_loss_tot, scaler
+        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, G_loss_tot, scaler, time_TSG
         
     def doTSG_testing(
         self,
@@ -465,9 +491,18 @@ class TSG:
             tpsImg,
             img_blur
         )
-        
-        # Classification of generated image
-        cls_output = cls(G_result)
-        prediction = torch.argmax(cls_output, 1)
+
+        normalize = self.myNormalize()
+
+        # Resize, ggf. repeat, normalize
+        G_result_resized = F.interpolate(G_result, size=(299, 299), mode='bilinear', align_corners=False)
+        if G_result_resized.shape[1] == 1:
+            G_result_resized = G_result_resized.repeat(1, 3, 1, 1)
+        G_result_norm = torch.stack([normalize(img) for img in G_result_resized])
+
+        # Prediction
+        cls.eval()
+        cls_output = cls(G_result_norm)
+        prediction = torch.argmax(cls_output, dim=1)
 
         return prediction
