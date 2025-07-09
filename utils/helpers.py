@@ -144,7 +144,7 @@ def get_train_val_loaders(
 
     # Load the full dataset with a dummy transform (will be replaced per split)
     # Load the full dataset with no transform (we'll apply transforms per split)
-    full_dataset = datasets.ImageFolder(data_dir, transform=transform_val)
+    full_dataset = datasets.ImageFolder(data_dir, transform=None)
 
     # Map class name to index in ImageFolder
     class_to_idx = {v: k for k, v in full_dataset.class_to_idx.items()}
