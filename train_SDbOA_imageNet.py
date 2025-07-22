@@ -70,7 +70,8 @@ if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
 # Clear GPU Memory
-torch.cuda.empty_cache()
+if not config.DEVICE.type=="cpu":
+    torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     # # start debugging
@@ -172,6 +173,22 @@ if __name__ == "__main__":
         netD.load_state_dict(model_dict)
         print(f"Loaded Discriminator-Net checkpoint from {config.PATH_TUNED_D}")
 
+    if os.path.exists(config.PATH_BEST_CLS):
+        checkpoint = torch.load(config.PATH_BEST_CLS, map_location=config.DEVICE)
+        model_dict = cls.state_dict()
+        filtered_dict = {
+            k: v for k, v in checkpoint.items()
+            if k in model_dict and v.shape == model_dict[k].shape
+        }
+        skipped = [k for k in checkpoint if k not in filtered_dict]
+        if skipped:
+            print(f"Not loaded Layer (due to conflicts in name and dimension):")
+            for k in skipped:
+                print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
+        model_dict.update(filtered_dict)
+        cls.load_state_dict(model_dict)
+        print(f"Loaded Classifier checkpoint from {config.PATH_CLS}")
+
     # === Initialize optimizers ===
     optimG = optim.Adam(netG.parameters(), lr=config.LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
     optimD = optim.Adam(netD.parameters(), lr=config.LR_DISC, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
@@ -184,6 +201,9 @@ if __name__ == "__main__":
     if os.path.exists(config.PATH_OPTIM_D):
         optimD.load_state_dict(torch.load(config.PATH_OPTIM_D))
         print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_TUNED_D}")
+
+    if os.path.exists(config.PATH_OPTIM_CLS):
+        optimC.load_state_dict(torch.load(config.PATH_OPTIM_CLS))
 
     # === Initialize loss functions === 
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
@@ -479,7 +499,7 @@ if __name__ == "__main__":
                 val_end_time = time.time()
                 val_duration = val_end_time - val_start_time
                 fps = float(total.cpu()) / val_duration
-                print(f"Validation Inference Speed: {fps:.2f} FPS")
+                print(f"    Validation Inference Speed: {fps:.2f} FPS")
 
                 # === Speichere Metriken dieser Epoche ===
                 epoch_metric = {
@@ -500,9 +520,9 @@ if __name__ == "__main__":
                 # Early stopping
                 if len(config.acc_history) >= config.PATIENCE:
                     slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
-                    print(f"Slope of accuracy trend: {slope:.6f}")
+                    print(f"    Slope of accuracy trend: {slope:.6f}")
                     if slope < config.MIN_SLOPE:
-                        print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
+                        print(f"    Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
                         break
 
                 # === Schreibe alle Metriken als CSV-Datei ===
