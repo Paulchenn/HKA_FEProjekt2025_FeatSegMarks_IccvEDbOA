@@ -1,13 +1,15 @@
 {
-  "device": "cuda",
-  "batch_size": 12,
+  "device": "cpu",
+  "batch_size": 1,
   "epochs": 500,
-  "num_workers": 8,
+  "num_workers": 0,
 
   "path_tuned_D": "./Result/2025_07_08__001/ImageNet256/tuned_D/Epoch_001.pth_false",
   "path_tuned_G": "./Result/2025_07_08__001/ImageNet256/tuned_G/Epoch_001.pth_false",
   "path_optim_D": "./Result/2025_07_08__001/ImageNet256/optim_D/Epoch_001.pth_false",
   "path_optim_G": "./Result/2025_07_08__001/ImageNet256/optim_G/Epoch_001.pth_false",
+  "path_optim_CLS": "./Result/2025_07_08__001/ImageNet256/optim_cls/best_optim_cls.pth",
+  "path_best_cls": "./Result/2025_07_08__001/ImageNet256/best_cls/best_cls.pth",
 
   "train_cls": true,
 
@@ -24,10 +26,10 @@
   "debugIterations_strt": 0,
   "debugIterations_amount": 6,
 
-  "show_images": false,
+  "show_images": true,
   "show_images_interval": 10,
 
-  "log_interval": 200,
+  "log_interval": 10,
 
   "image_size": 128,
   "generator_input_dim": 64,
