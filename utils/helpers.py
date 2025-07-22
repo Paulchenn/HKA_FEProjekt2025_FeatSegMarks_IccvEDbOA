@@ -1,6 +1,8 @@
 import json
 import os
 import torch
+import time
+import itertools
 import pdb
 
 import numpy as np
@@ -11,6 +13,9 @@ from types import SimpleNamespace
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
 from datetime import datetime
+
+
+#def preperations():
 
 
 def get_config(file_path):
@@ -33,8 +38,10 @@ def get_config(file_path):
 
     config["PATH_TUNED_D"] = config["path_tuned_D"]
     config["PATH_TUNED_G"] = config["path_tuned_G"]
+    config["PATH_BEST_CLS"] = config["path_best_cls"]
     config["PATH_OPTIM_D"] = config["path_optim_D"]
     config["PATH_OPTIM_G"] = config["path_optim_G"]
+    config["PATH_OPTIM_CLS"] = config["path_optim_CLS"]
 
     config["IMG_SIZE"] = config["image_size"]
     config["GEN_IN_DIM"] = config["generator_input_dim"]
@@ -62,7 +69,7 @@ def get_config(file_path):
     config["CLASS_NAMES"] = list(config["dataset"]["SELECTED_SYNSETS"].values())
     config["SELECTED_SYNSETS"] = config["dataset"]["SELECTED_SYNSETS"]
 
-    today_str = datetime.today().strftime('%Y_%m_%d')
+    today_str = datetime.today().strftime('%Y%m%d_%H%M%S')
     config["SAVE_PATH"] = os.path.join(config["save_path"], today_str)
 
     return SimpleNamespace(**config)
@@ -224,3 +231,158 @@ def get_train_val_loaders(
         plt.show()
 
     return train_loader, val_loader
+
+
+def show_images(
+    img,
+    deformedImg,
+    edgeMap
+):
+    """
+    Show the original image, deformed image, and edge map.
+    :param img: Original image tensor
+    :param deformedImg: Deformed image tensor
+    :param edgeMap: Edge map tensor
+    """
+    
+    # === Show the original and deformed image ===
+    plt.figure(figsize=(10, 5))  # Adjusted figure size
+    plt.subplot(1, 3, 1)
+    plt.axis('off')
+    plt.title('Original Image')
+    plt.imshow(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5)
+
+    plt.subplot(1, 3, 2)
+    plt.axis('off')
+    plt.title('Deformed Image')
+    deformedImg_clipped = deformedImg[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5
+    deformedImg_clipped = np.clip(deformedImg_clipped, 0, 1)
+    plt.imshow(deformedImg_clipped)
+
+    plt.subplot(1, 3, 3)
+    plt.axis('off')
+    plt.title('Edge Map')
+    edgeMap_clipped = edgeMap[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5
+    edgeMap_clipped = np.clip(edgeMap_clipped, 0, 1)
+    plt.imshow(edgeMap_clipped)
+
+    plt.show(block=False)
+    plt.pause(2)  # Show for 2 seconds (adjust as needed)
+    plt.close()
+
+
+def show_result(
+        config,
+        num_epoch,
+        edgeMap,
+        deformedImg,
+        img=None,
+        print_original=False,
+        show=False,
+        save=False,
+        path='Result/result.png',
+        *,
+        netG
+):
+    mn_batch = edgeMap.shape[0]
+
+    if not print_original:
+        zz = torch.randn(mn_batch, 100, 1, 1).to(config.DEVICE)
+        netG.eval()
+        test_images = netG(zz, edgeMap, deformedImg)
+        netG.train()
+        myTitle = 'Generated Images'
+    else:
+        test_images = img
+        myTitle = 'Original Images'
+
+    size_figure_grid = int(np.ceil(np.sqrt(mn_batch)))
+    fig, ax = plt.subplots(size_figure_grid, size_figure_grid, figsize=(5, 5), squeeze=False)
+    for i, j in itertools.product(range(size_figure_grid), range(size_figure_grid)):
+        ax[i, j].get_xaxis().set_visible(False)
+        ax[i, j].get_yaxis().set_visible(False)
+
+    for k in range(mn_batch):
+        i = k // size_figure_grid
+        j = k % size_figure_grid
+        if i < size_figure_grid and j < size_figure_grid:
+            ax[i, j].cla()
+            img = test_images[k].cpu().data.numpy()
+            img = np.transpose(img, (1, 2, 0))
+            img = (img * 0.5) + 0.5
+            img = np.clip(img, 0, 1)
+            ax[i, j].imshow(img)
+
+    label = 'Epoch {0}'.format(num_epoch)
+    fig.text(0.5, 0.04, label, ha='center')
+
+    if save:
+        dir_name = os.path.dirname(path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
+        if not path.endswith('.png'):
+            path += '.png'
+        plt.tight_layout()
+        plt.subplots_adjust(top=0.85)
+        plt.suptitle(myTitle, fontsize=16)
+        print("Saving to:", os.path.abspath(path))
+        plt.savefig(path, bbox_inches='tight', dpi=300)
+        print(f"Result saved to {path}")
+
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
+def do_iteration(
+        i,
+        config,
+        img,
+        label,
+        emse,
+        tsd,
+        tsg,
+        time_EMSE,
+        time_TSD,
+        time_TSG,
+        netD,
+        netG,
+        cls,
+        optimD,
+        optimG,
+        optimC,
+        CE_loss,
+        L1_loss,
+        scaler
+):
+    # === EMSE >>>
+    time_startEMSE = time.time()
+    edgeMap = emse.doEMSE(img)
+    time_EMSE.append(time.time() - time_startEMSE)
+    # <<< EMSE ===
+
+    # === TSD >>>
+    time_startTSD = time.time()
+    deformedImg = tsd.doTSD(edgeMap)
+    time_TSD.append(time.time() - time_startTSD)
+    # <<< TSD ===
+
+    # === Show images depending on configuration ===
+    if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
+        show_images(
+            img,
+            deformedImg,
+            edgeMap
+        )
+
+    # === TSG >>>
+    time_startTSG = time.time()
+    netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler, time_ = tsg.doTSG_training(
+        config, emse, tsd, img, label, deformedImg, netD, netG, cls,
+        optimD, optimG, optimC, CE_loss, L1_loss, scaler, time_TSG
+    )
+    time_TSG.time_tot.append(time.time() - time_startTSG)
+    # <<< TSG ===
+
+    return deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler, time_ 
