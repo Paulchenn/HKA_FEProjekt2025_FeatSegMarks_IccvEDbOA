@@ -32,11 +32,14 @@ CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
 config = get_config(os.path.join(SCRIPT_DIR, 'config/config.json'))
 
 # Clear GPU Memory
-torch.cuda.empty_cache()
+if not config.DEVICE.type=="cpu":
+    torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     # # start debugging
     # pdb.set_trace()
+
+    torch.autograd.set_detect_anomaly(True)
 
     # === Initialize Trainiingclasses ===
     emse    = EMSE(config=config)    # Initialize EMSE class
@@ -69,6 +72,7 @@ if __name__ == "__main__":
         "data",
         config.DATASET_NAME
     )
+    root = os.path.join(cwd, "src", config.DATASET_NAME)
     print(f"Root directory for ImageNet 256: {root}")
     train_loader, val_loader = get_train_val_loaders(
         config,
@@ -119,6 +123,22 @@ if __name__ == "__main__":
         netD.load_state_dict(model_dict)
         print(f"Loaded Discriminator checkpoint from {config.PATH_TUNED_D}")
 
+    if os.path.exists(config.PATH_BEST_CLS):
+        checkpoint = torch.load(config.PATH_BEST_CLS, map_location=config.DEVICE)
+        model_dict = cls.state_dict()
+        filtered_dict = {
+            k: v for k, v in checkpoint.items()
+            if k in model_dict and v.shape == model_dict[k].shape
+        }
+        skipped = [k for k in checkpoint if k not in filtered_dict]
+        if skipped:
+            print(f"Not loaded Layer (due to conflicts in name and dimension):")
+            for k in skipped:
+                print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
+        model_dict.update(filtered_dict)
+        cls.load_state_dict(model_dict)
+        print(f"Loaded Classifier checkpoint from {config.PATH_CLS}")
+
     # === Initialize optimizers ===
     optimG = optim.Adam(netG.parameters(), lr=config.LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
     optimD = optim.Adam(netD.parameters(), lr=config.LR_DISC, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
@@ -129,6 +149,9 @@ if __name__ == "__main__":
 
     if os.path.exists(config.PATH_OPTIM_D):
         optimD.load_state_dict(torch.load(config.PATH_OPTIM_D))
+
+    if os.path.exists(config.PATH_OPTIM_CLS):
+        optimC.load_state_dict(torch.load(config.PATH_OPTIM_CLS))
 
     # === Initialize loss functions === 
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
@@ -161,6 +184,7 @@ if __name__ == "__main__":
 
         # === Show images depending on configuration ===
         show_result(  # Shows the result of actual epoch
+            config,
             -1,  # -1 means no epoch number
             img,
             EDGE_MAP_TEST,
@@ -209,7 +233,13 @@ if __name__ == "__main__":
         time_Iteration = []  # Start time for iteration
         time_EMSE = []
         time_TSD = []
-        time_TSG = []
+        time_TSG = type('TimeTSG', (object,), {})()  # Create a simple object to hold TSG times
+        time_TSG.time_trainD = []
+        time_TSG.time_trainG1 = []
+        time_TSG.time_trainCls = []
+        time_TSG.time_trainG2 = []
+        time_TSG.time_Scaler = []
+        time_TSG.time_tot = []
         itersForAverageCalc = 10
         for i, (img, label) in enumerate(train_loader):
             time_startIteration = time.time()
@@ -220,59 +250,81 @@ if __name__ == "__main__":
 
             img = img.to(config.DEVICE, non_blocking=True)
             label = label.to(config.DEVICE, non_blocking=True)
-            with torch.amp.autocast(config.DEVICE.type):
-                # === EMSE >>>
-                time_startEMSE = time.time()
-                edgeMap = emse.doEMSE(img)
-                time_EMSE.append(time.time() - time_startEMSE)
-                # <<< EMSE ===
-
-                # === TSD >>>
-                time_startTSD = time.time()
-                deformedImg = tsd.doTSD(edgeMap)
-                time_TSD.append(time.time() - time_startTSD)
-                # <<< TSD ===
-
-                # === Show images depending on configuration ===
-                if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
-                    show_images(
+            if not config.DEVICE.type=="cpu":
+                with torch.amp.autocast(config.DEVICE.type):
+                    deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, scaler, time_ = do_iteration(
+                        i,
+                        config,
                         img,
-                        deformedImg,
-                        edgeMap
+                        label,
+                        emse,
+                        tsd,
+                        tsg,
+                        time_EMSE,
+                        time_TSD,
+                        time_TSG,
+                        netD,
+                        netG,
+                        cls,
+                        optimD,
+                        optimG,
+                        optimC,
+                        CE_loss,
+                        L1_loss,
+                        scaler
                     )
-
-                # === TSG >>>
-                time_startTSG = time.time()
-                netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler, time_ = tsg.doTSG_training(
-                    emse, tsd, img, label, deformedImg, netD, netG, cls,
-                    optimD, optimG, optimC, CE_loss, L1_loss, scaler
+            else:
+                deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, scaler, time_ = do_iteration(
+                    i,
+                    config,
+                    img,
+                    label,
+                    emse,
+                    tsd,
+                    tsg,
+                    time_EMSE,
+                    time_TSD,
+                    time_TSG,
+                    netD,
+                    netG,
+                    cls,
+                    optimD,
+                    optimG,
+                    optimC,
+                    CE_loss,
+                    L1_loss,
+                    scaler
                 )
-                time_TSG.time_tot.append(time.time() - time_startTSG)
-                # <<< TSG ===
 
             time_Iteration.append(time.time() - time_startIteration)
 
             # Calculate times
-            if i==itersForAverageCalc:
+            if i==itersForAverageCalc-1:
                 print("----------")
-                print("Time taken for 10 iterations: ", round(time.time() - sum(time_Iteration), 2), " s")
-                print("Epoch will roughly take: ", round((time.time() - sum(time_Iteration))/itersForAverageCalc * len(train_loader) / 60, 2), " min")
+                print(f"Time taken for {i+1} iterations: {round(sum(time_Iteration), 4)} s")
+                print("Epoch will roughly take: ", round(sum(time_Iteration)/itersForAverageCalc * len(train_loader) / 60, 4), " min")
                 print('-----')
-                print(f"Average times after {itersForAverageCalc} iterations:")
-                print("     Iteration:      ", round((time.time() - sum(time_Iteration))/itersForAverageCalc))
-                print("     EMSE:           ", round((time.time() - sum(time_EMSE))/itersForAverageCalc))
-                print("     TSD:            ", round((time.time() - sum(time_TSD))/itersForAverageCalc))
-                print("     TSG (total):    ", round((time.time() - sum(time_TSG.time_tot))/itersForAverageCalc))
-                print("     TSG (trainD):   ", round((time.time() - sum(time_TSG.time_trainD))/itersForAverageCalc))
-                print("     TSG (trainG1):  ", round((time.time() - sum(time_TSG.time_trainG1))/itersForAverageCalc))
-                print("     TSG (trainCls): ", round((time.time() - sum(time_TSG.time_trainCls))/itersForAverageCalc))
-                print("     TSG (trainG2):  ", round((time.time() - sum(time_TSG.time_trainG2))/itersForAverageCalc))
-                print("     TSG (Scaler):   ", round((time.time() - sum(time_TSG.time_Scaler))/itersForAverageCalc))
+                print(f"Average times after {i+1} iterations:")
+                print("     Iteration:      ", round(sum(time_Iteration)/(i+1), 4), " s")
+                print("     EMSE:           ", round(sum(time_EMSE)/(i+1), 4), " s")
+                print("     TSD:            ", round(sum(time_TSD)/(i+1), 4), " s")
+                print("     TSG (total):    ", round(sum(time_TSG.time_tot)/(i+1), 4), " s")
+                print("     TSG (trainD):   ", round(sum(time_TSG.time_trainD)/(i+1), 4), " s")
+                print("     TSG (trainG1):  ", round(sum(time_TSG.time_trainG1)/(i+1), 4), " s")
+                print("     TSG (trainCls): ", round(sum(time_TSG.time_trainCls)/(i+1), 4), " s")
+                print("     TSG (trainG2):  ", round(sum(time_TSG.time_trainG2)/(i+1), 4), " s")
+                print("     TSG (Scaler):   ", round(sum(time_TSG.time_Scaler)/(i+1), 4), " s")
                 print("----------")
-
-            # Print loss values after every 5 iterations
-            if i % config.LOG_INTERVAL == 0 and i > itersForAverageCalc:
-                print('Epoch[', epoch + 1, '/', config.EPOCHS, '][', i + 1, '/', len(train_loader), ']: TOTAL_LOSS', loss_tot.item())
+            elif (i+1) % config.LOG_INTERVAL == 0 and (i+1) > itersForAverageCalc:
+                print("----------")
+                print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
+                if config.TRAIN_CLS:
+                    print(f"    Generator loss: G_L1_loss-D_result_genImg+(0.5*G_celoss)+edge_loss+loss.cls_loss = {loss.G_loss_tot.item():.4f}")
+                else:
+                    print(f"    Generator loss: G_L1_loss-D_result_genImg+(0.5*G_celoss)+edge_loss = {loss.G_loss_tot.item():.4f}")
+                print(f"    Discriminator loss: (-D_result_realImg+D_result_genImg)+(0.5*D_celoss) = {loss.D_loss:.4f}")
+                print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
+                print("----------")
 
             # For debugging: Stop after a certain number of iterations
             if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START + config.DEBUG_ITERS_AMOUNT:
@@ -282,6 +334,7 @@ if __name__ == "__main__":
         path2save_epochImg = os.path.join(folder2save_epochImg, f'Epoch_{epoch+1:0{num_digits}d}.png')  # Path to save the results
         try:
             show_result(  # Shows the result of actual epoch
+                config,
                 epoch,
                 EDGE_MAP_TEST,
                 DEFORMED_IMG_TEST,
@@ -306,7 +359,7 @@ if __name__ == "__main__":
         create_saveFolder(folder2save_optimG)  # Create folder to save tuned Generator
         path2save_optimG = os.path.join(folder2save_optimG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(optimG.state_dict(), path2save_optimG)
-        # >>> Save Generator and its Optimizer ===
+        # <<< Save Generator and its Optimizer ===
 
 
         # === Save Discriminator and its Optimizer >>>
@@ -321,7 +374,7 @@ if __name__ == "__main__":
         create_saveFolder(folder2save_optimD)  # Create folder to save tuned Generator
         path2save_optimD = os.path.join(folder2save_optimD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
         torch.save(optimG.state_dict(), path2save_optimD)
-        # >>> Save Discriminator and its Optimizer ===
+        # <<< Save Discriminator and its Optimizer ===
 
 
         # === VALIDATION ===
@@ -333,12 +386,13 @@ if __name__ == "__main__":
         cls.eval()
 
         # Counter for correct predictions and total predictions
-        correct = torch.zeros(1).squeeze().to(device)
-        total   = torch.zeros(1).squeeze().to(device)
+        correct = torch.zeros(1).squeeze().to(config.DEVICE, non_blocking=True)
+        total   = torch.zeros(1).squeeze().to(config.DEVICE, non_blocking=True)
 
         # Only validate every N epochs
         if epoch % 1 == 0:
-            print(f"Validating at epoch {epoch + 1}/{config.EPOCHS}...")
+            print("----------")
+            print(f"Validating at Epch {epoch + 1} / {config.EPOCHS}:")
             with torch.no_grad():
                 for i, (img, label) in enumerate(val_loader):
                     # For Debugging
@@ -360,16 +414,23 @@ if __name__ == "__main__":
                     # <<< TSD ===
 
                     # === Generation and Classification >>>
-                    prediction = tsg.doTSG_testing(
+                    loss, cls_prediction = tsg.doTSG_testing(
+                        config,
+                        emse,
+                        tsd,
                         img,
+                        label,
                         deformedImg,
+                        netD,
                         netG,
-                        cls
+                        cls,
+                        CE_loss,
+                        L1_loss
                     )
                     # <<< Generation and Classification ===
 
                     # Count correct predictions and total predictions
-                    correct += (prediction == label).sum().float()
+                    correct += (cls_prediction == label).sum().float()
                     total += len(label)
 
                     # For debuging (Training of even one Epoch takes very long)
@@ -379,25 +440,46 @@ if __name__ == "__main__":
                 # Calculate accuracy, append to history and print
                 acc = (correct / total).cpu().detach().data.numpy()
                 config.acc_history.append(acc)
-                print('Epoch: ', epoch + 1, ' test accuracy: ', acc)
+
+                # Print results
+                print(f"    Accuracy of predicted labels by classifier: correct/total = {correct}/{total} = {acc:.4f}")
+                print(f"    Generator loss: G_L1_loss-D_result_genImg+(0.5*G_celoss)+edge_loss+cls_loss = {loss.G_loss_tot.item():.4f}")
+                print(f"    Discriminator loss: (-D_result_realImg+D_result_genImg)+(0.5*D_celoss) = {loss.D_loss:.4f}")
+                print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
+
 
                 if acc > best_acc:
                     best_acc = acc
-                    print('Improvement, best accuracy: ', acc)
-                    torch.save(cls.state_dict(), './Result/best_cls.pth')
+                    print('    Improvement, best accuracy: ', acc)
+                    # === Save best Classifier and its Optimizer >>>
+                    if config.train_cls:
+                        # Save the best classifier model
+                        folder2save_bestCls = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'best_cls')
+                        create_saveFolder(folder2save_bestCls)  # Create folder to save best classifier
+                        path2save_bestCls = os.path.join(folder2save_bestCls, 'best_cls.pth')  # Path to save the results
+                        torch.save(cls.state_dict(), path2save_bestCls)
+
+                        # Save the best classifier optimizer
+                        folder2save_bestOptimCls = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_cls')
+                        create_saveFolder(folder2save_bestOptimCls)  # Create folder to save best classifier optimizer
+                        path2save_bestOptimCls = os.path.join(folder2save_bestOptimCls, 'best_optim_cls.pth')  # Path to save the results
+                        torch.save(optimC.state_dict(), path2save_bestOptimCls)
+                    # <<< Save best Classifier and its Optimizer ===
                 else:
-                    print('No improvement, best accuracy: ', best_acc)
+                    print('    No improvement, best accuracy: ', best_acc)
                 
                 val_end_time = time.time()
                 val_duration = val_end_time - val_start_time
                 fps = float(total.cpu()) / val_duration
-                print(f"Validation Inference Speed: {fps:.2f} FPS")
+                print(f"    Validation Inference Speed: {fps:.2f} FPS")
 
                 # === Speichere Metriken dieser Epoche ===
                 epoch_metric = {
                     "epoch": epoch + 1,
                     "accuracy": round(float(acc), 4),
-                    "loss_total": round(float(loss_tot.item()), 4),
+                    "generator_loss": round(float(loss.G_loss_tot.item()), 4),
+                    "discriminator_loss": round(float(loss.D_loss.item()), 4),
+                    "classifier_loss": round(float(loss.cls_loss.item()), 4),
                     "FPS": round(fps, 2),
                     "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
                     "MMA@3": None,
@@ -409,9 +491,9 @@ if __name__ == "__main__":
                 # Early stopping
                 if len(config.acc_history) >= config.PATIENCE:
                     slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
-                    print(f"Slope of accuracy trend: {slope:.6f}")
+                    print(f"    Slope of accuracy trend: {slope:.6f}")
                     if slope < config.MIN_SLOPE:
-                        print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
+                        print(f"    Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
                         break
 
                 # === Schreibe alle Metriken als CSV-Datei ===
@@ -421,8 +503,4 @@ if __name__ == "__main__":
                     writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
                     writer.writeheader()
                     writer.writerows(epoch_metrics)
-
-                print(f"[INFO] Saved Epoch-Metrics at: {csv_output_path}")
-
-
-        print('Epoch[', epoch + 1, '/', config.EPOCHS, '][', i + 1, '/', len(train_loader), ']: TOTAL_LOSS', loss_tot.item())
+            print("----------")
