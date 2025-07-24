@@ -179,16 +179,16 @@ if __name__ == "__main__":
         # <<< EMSE ===
 
         # === TSD >>>
-        DEFORMED_IMG_TEST = tsd.doTSD(img)
+        DEFORMED_IMG_TEST = tsd.doTSD(EDGE_MAP_TEST)
         # <<< TSD ===
 
         # === Show images depending on configuration ===
         show_result(  # Shows the result of actual epoch
             config,
             -1,  # -1 means no epoch number
-            img,
-            EDGE_MAP_TEST,
-            DEFORMED_IMG_TEST,
+            img=img,
+            edgeMap=EDGE_MAP_TEST,
+            deformedImg=DEFORMED_IMG_TEST,
             path=path2save_epochImg,
             print_original=True,
             show=False,
@@ -336,8 +336,8 @@ if __name__ == "__main__":
             show_result(  # Shows the result of actual epoch
                 config,
                 epoch,
-                EDGE_MAP_TEST,
-                DEFORMED_IMG_TEST,
+                edgeMap=EDGE_MAP_TEST,
+                deformedImg=DEFORMED_IMG_TEST,
                 path=path2save_epochImg,
                 netG=netG,
                 show=False,
@@ -373,7 +373,7 @@ if __name__ == "__main__":
         folder2save_optimD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_D')
         create_saveFolder(folder2save_optimD)  # Create folder to save tuned Generator
         path2save_optimD = os.path.join(folder2save_optimD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-        torch.save(optimG.state_dict(), path2save_optimD)
+        torch.save(optimD.state_dict(), path2save_optimD)
         # <<< Save Discriminator and its Optimizer ===
 
 
