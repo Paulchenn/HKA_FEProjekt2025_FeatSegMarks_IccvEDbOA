@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
 from datetime import datetime
+from PIL import Image
 
 
 #def preperations():
@@ -127,64 +128,52 @@ def get_tiny_imagenet_loaders(
 
 
 def get_train_val_loaders(
-        config,
-        data_dir,
-        transform_train,
-        transform_val,
-        val_split=0.2,
-        pin_memory=True,
-        seed=42
-    ):
+    config,
+    data_dir,
+    transform_train,
+    transform_val,
+    val_split=0.2,
+    pin_memory=True,
+    seed=42
+):
     """
-    Splits the dataset in data_dir into train and validation sets and returns their DataLoaders.
-    Applies transform_train to train set and transform_val to val set.
+    Returns train and validation DataLoaders from an ImageFolder dataset.
+    Applies different transforms to train and val datasets.
+    Optionally filters to only include selected classes.
     """
+    # Full dataset (no transform yet)
+    base_dataset = datasets.ImageFolder(data_dir)
 
-    selected_classes = set(config.CLASS_NAMES)
+    # Filter by selected class names (optional)
+    class_names = set(config.CLASS_NAMES)
+    if class_names is not None:
+        # Map class name to index
+        class_to_idx = base_dataset.class_to_idx
+        selected_idx = [class_to_idx[name] for name in class_names if name in class_to_idx]
 
-    # Load the full dataset with a dummy transform (will be replaced per split)
-    # Load the full dataset with no transform (we'll apply transforms per split)
-    full_dataset = datasets.ImageFolder(data_dir, transform=None)
+        # Filter samples
+        filtered_samples = [s for s in base_dataset.samples if s[1] in selected_idx]
 
-    # Map class name to index in ImageFolder
-    class_to_idx = {v: k for k, v in full_dataset.class_to_idx.items()}
-    selected_indices = [idx for idx, classname in class_to_idx.items() if classname in selected_classes]
-    #selected_indices = [class_to_idx[name] for name in selected_classes if name in class_to_idx]
+        # Create new dataset with filtered samples
+        base_dataset.samples = filtered_samples
+        base_dataset.targets = [s[1] for s in filtered_samples]
 
-    # Filter images to only include selected class indices
-    filtered_indices = [i for i, (_, label) in enumerate(full_dataset.samples) if label in selected_indices]
-    filtered_dataset = Subset(full_dataset, filtered_indices)
-
-    # Now split filtered dataset
-    total_size = len(filtered_dataset)
+    # Split dataset
+    total_size = len(base_dataset)
     val_size = int(val_split * total_size)
     train_size = total_size - val_size
 
-    train_subset, val_subset = random_split(
-        filtered_dataset, [train_size, val_size],
-        generator=torch.Generator().manual_seed(seed)
-    )
+    generator = torch.Generator().manual_seed(seed)
+    train_subset, val_subset = random_split(base_dataset, [train_size, val_size], generator=generator)
 
-    # Subset class that allows individual transforms
-    class SubsetWithTransform(Subset):
-        def __init__(self, subset, transform):
-            super().__init__(subset.dataset, subset.indices)
-            self.transform = transform
-        def __getitem__(self, idx):
-            img, label = self.dataset[self.indices[idx]]
-            if self.transform is not None:
-                img = self.transform(img)
-            return img, label
-        
-    train_dataset = SubsetWithTransform(train_subset, transform_train)
-    val_dataset = SubsetWithTransform(val_subset, transform_val)
+    # Wrap subsets to apply transform
+    train_subset.dataset.transform = transform_train
+    val_subset.dataset.transform = transform_val
 
-    train_dataset.dataset.classes = list(selected_classes)
-    val_dataset.dataset.classes = list(selected_classes)
-
-    train_loader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True,
+    # Create loaders
+    train_loader = DataLoader(train_subset, batch_size=config.BATCH_SIZE, shuffle=True,
                               num_workers=config.NUM_WORKERS, pin_memory=pin_memory)
-    val_loader = DataLoader(val_dataset, batch_size=config.BATCH_SIZE, shuffle=False,
+    val_loader = DataLoader(val_subset, batch_size=config.BATCH_SIZE, shuffle=False,
                             num_workers=config.NUM_WORKERS, pin_memory=pin_memory)
     
     # After creating the loaders
@@ -274,13 +263,13 @@ def show_images(
 def show_result(
         config,
         num_epoch,
-        edgeMap,
-        deformedImg,
         img=None,
+        edgeMap=None,
+        deformedImg=None,
+        path='Result/result.png',
         print_original=False,
         show=False,
         save=False,
-        path='Result/result.png',
         *,
         netG
 ):
