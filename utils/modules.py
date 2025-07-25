@@ -320,11 +320,11 @@ class TSG:
 
         # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
         loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
-        scaler.scale(loss.stage1_G_loss).backward()
-        scaler.step(optimG)
-        scaler.update()
-        # loss.stage1_G_loss.backward()
-        # optimG.step()
+        #scaler.scale(loss.stage1_G_loss).backward()
+        #scaler.step(optimG)
+        #scaler.update()
+        loss.stage1_G_loss.backward()
+        optimG.step()
         time_TSG.time_trainG1.append(time.time() - time_startTrainG1)
 
         # === Step 2: Phase 2 – Fine Tuning (Edeform + Itxt) ===
@@ -363,11 +363,11 @@ class TSG:
 
         # Total loss = GAN + Classification + Shape-Preservation
         loss.stage2_G_loss = G_L1_loss_fine - D_result_fineImg.detach() + G_celoss_fine + edge_loss + loss.cls_loss
-        scaler.scale(loss.stage2_G_loss).backward()
-        scaler.step(optimG)
-        scaler.update()
-        # loss.stage2_G_loss.backward()
-        # optimG.step()
+        #scaler.scale(loss.stage2_G_loss).backward()
+        #scaler.step(optimG)
+        #scaler.update()
+        loss.stage2_G_loss.backward()
+        optimG.step()
         time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
 
         return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_TSG, scaler
