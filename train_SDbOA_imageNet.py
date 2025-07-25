@@ -416,9 +416,9 @@ if __name__ == "__main__":
                     loss, cls_prediction = tsg.doTSG_testing(
                         config,
                         emse,
-                        tsd,
                         img,
                         label,
+                        edgeMap,
                         deformedImg,
                         netD,
                         netG,
