@@ -90,6 +90,7 @@ if __name__ == "__main__":
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE)             # Discriminator to distinguish real/fake images
     cls     = models.inception_v3(pretrained=True) # ResNet18(BasicBlock, num_classes=config.NUM_CLASSES).to(config.DEVICE)   # Classifier (here: ResNet-18)
+    cls     = cls.to(config.DEVICE)
     
     # === Load checkpoints
     if os.path.exists(config.PATH_TUNED_G):
