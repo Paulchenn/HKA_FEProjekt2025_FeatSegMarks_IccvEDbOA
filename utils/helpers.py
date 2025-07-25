@@ -66,6 +66,7 @@ def get_config(file_path):
     config["LR_CLS"] = config["learning_rate"]["classifier"]
 
     config["DATASET_NAME"] = config["dataset"]["name"]
+    config["DATASET_PATH"] = config["dataset"]["path"]
     config["NUM_CLASSES"] = config["dataset"]["num_classes"]
     config["CLASS_NAMES"] = list(config["dataset"]["SELECTED_SYNSETS"].values())
     config["SELECTED_SYNSETS"] = config["dataset"]["SELECTED_SYNSETS"]
