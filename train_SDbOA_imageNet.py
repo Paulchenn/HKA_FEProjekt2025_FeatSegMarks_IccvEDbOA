@@ -238,7 +238,6 @@ if __name__ == "__main__":
         time_TSG.time_trainG1 = []
         time_TSG.time_trainCls = []
         time_TSG.time_trainG2 = []
-        time_TSG.time_Scaler = []
         time_TSG.time_tot = []
         itersForAverageCalc = 10
         for i, (img, label) in enumerate(train_loader):
@@ -252,7 +251,7 @@ if __name__ == "__main__":
             label = label.to(config.DEVICE, non_blocking=True)
             if not config.DEVICE.type=="cpu":
                 with torch.amp.autocast(config.DEVICE.type):
-                    deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, scaler, time_ = do_iteration(
+                    deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = do_iteration(
                         i,
                         config,
                         img,
@@ -274,7 +273,7 @@ if __name__ == "__main__":
                         scaler
                     )
             else:
-                deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, scaler, time_ = do_iteration(
+                deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = do_iteration(
                     i,
                     config,
                     img,
@@ -313,17 +312,17 @@ if __name__ == "__main__":
                 print("     TSG (trainG1):  ", round(sum(time_TSG.time_trainG1)/(i+1), 4), " s")
                 print("     TSG (trainCls): ", round(sum(time_TSG.time_trainCls)/(i+1), 4), " s")
                 print("     TSG (trainG2):  ", round(sum(time_TSG.time_trainG2)/(i+1), 4), " s")
-                print("     TSG (Scaler):   ", round(sum(time_TSG.time_Scaler)/(i+1), 4), " s")
                 print("----------")
             elif (i+1) % config.LOG_INTERVAL == 0 and (i+1) > itersForAverageCalc:
                 print("----------")
                 print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
+                print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
+                print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
                 if config.TRAIN_CLS:
-                    print(f"    Generator loss: G_L1_loss-D_result_genImg+(0.5*G_celoss)+edge_loss+loss.cls_loss = {loss.G_loss_tot.item():.4f}")
+                    print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
+                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
                 else:
-                    print(f"    Generator loss: G_L1_loss-D_result_genImg+(0.5*G_celoss)+edge_loss = {loss.G_loss_tot.item():.4f}")
-                print(f"    Discriminator loss: (-D_result_realImg+D_result_genImg)+(0.5*D_celoss) = {loss.D_loss:.4f}")
-                print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
+                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {loss.stage2_G_loss.item():.4f}")
                 print("----------")
 
             # For debugging: Stop after a certain number of iterations
