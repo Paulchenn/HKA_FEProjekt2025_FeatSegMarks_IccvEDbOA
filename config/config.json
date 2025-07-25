@@ -1,8 +1,8 @@
 {
-  "device": "cpu",
-  "batch_size": 1,
+  "device": "gpu",
+  "batch_size": 16,
   "epochs": 500,
-  "num_workers": 0,
+  "num_workers": 4,
 
   "path_tuned_D": "./Result/2025_07_08__001/ImageNet256/tuned_D/Epoch_001.pth_false",
   "path_tuned_G": "./Result/2025_07_08__001/ImageNet256/tuned_G/Epoch_001.pth_false",
@@ -38,7 +38,7 @@
 
   "dataset": {
     "name": "ImageNet256",
-    "path": "./src/ImageNet256",
+    "path": "~/torch/data/ImageNet256",
     "num_classes": 1000,
     "SELECTED_SYNSETS": {
       "0": "abacus",

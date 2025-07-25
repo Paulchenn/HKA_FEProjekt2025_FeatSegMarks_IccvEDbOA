@@ -73,6 +73,7 @@ if __name__ == "__main__":
         config.DATASET_NAME
     )
     root = os.path.join(cwd, "src", config.DATASET_NAME)
+    root = config.DATASET_PATH
     print(f"Root directory for ImageNet 256: {root}")
     train_loader, val_loader = get_train_val_loaders(
         config,
