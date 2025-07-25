@@ -306,7 +306,7 @@ class TSG:
         #scaler.scale(loss.stage1_D_loss).backward(retain_graph=True)
         #scaler.step(optimD)
         #scaler.update()
-        loss.D_loss.backward(retain_graph=True)
+        loss.stage1_D_loss.backward(retain_graph=True)
         optimD.step()
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
 
