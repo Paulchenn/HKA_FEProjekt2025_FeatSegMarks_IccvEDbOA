@@ -250,7 +250,7 @@ if __name__ == "__main__":
 
             img = img.to(config.DEVICE, non_blocking=True)
             label = label.to(config.DEVICE, non_blocking=True)
-            if not config.DEVICE.type=="cpu":
+            if False: #not config.DEVICE.type=="cpu":
                 with torch.amp.autocast(config.DEVICE.type):
                     deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = do_iteration(
                         i,
