@@ -343,8 +343,10 @@ class TSG:
             if G_fine_resized.shape[1] == 1:
                 G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
             G_fine_norm = self.myNormalize()(G_fine_resized)
-            with torch.cuda.amp.autocast(enabled=False):
-                cls_output = cls(G_fine_norm.detach().float())
+            cls_output = cls(G_fine_norm.detach())
+            #G_fine_norm = self.myNormalize()(G_fine_resized)
+            #with torch.cuda.amp.autocast(enabled=False):
+            #    cls_output = cls(G_fine_norm.detach().float())
             loss.cls_loss = CE_loss(cls_output, label)
         else:
             loss.cls_loss = torch.tensor(0.0).to(self.config.DEVICE)
