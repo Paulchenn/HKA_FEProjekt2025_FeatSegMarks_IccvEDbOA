@@ -303,6 +303,12 @@ class TSG:
         time_startTrainD = time.time()
         D_celoss = CE_loss(aux_output_realImg, label)
         loss.stage1_D_loss = (-D_result_realImg + D_result_roughImg) + 0.5 * D_celoss
+        if not torch.isfinite(loss.stage1_D_loss):
+            print("NaN detected in stage1_D_loss!")
+            print("D_result_realImg:", D_result_realImg)
+            print("D_result_roughImg:", D_result_roughImg)
+            print("D_celoss:", D_celoss)
+            raise ValueError("NaN in stage1_D_loss")
         scaler.scale(loss.stage1_D_loss).backward(retain_graph=True)
         scaler.step(optimD)
         scaler.update()
