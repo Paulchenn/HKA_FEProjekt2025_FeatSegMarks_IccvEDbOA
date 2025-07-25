@@ -14,7 +14,7 @@
   "device": "cuda",
   "batch_size": 10,
   "epochs": 500,
-  "num_workers": 0,
+  "num_workers": 4,
 
   "path_tuned_D": "false./Result/20250729_131300/ImageNet256/tuned_D/Epoch_051.pth",
   "path_tuned_G": "false./Result/20250729_131300/ImageNet256/tuned_G/Epoch_051.pth",
