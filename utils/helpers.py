@@ -367,11 +367,11 @@ def do_iteration(
 
     # === TSG >>>
     time_startTSG = time.time()
-    netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler, time_ = tsg.doTSG_training(
-        config, emse, tsd, img, label, deformedImg, netD, netG, cls,
-        optimD, optimG, optimC, CE_loss, L1_loss, scaler, time_TSG
+    netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, time_, scaler = tsg.doTSG_training(
+        config, emse, img, label, edgeMap, deformedImg, netD, netG, cls,
+        optimD, optimG, optimC, CE_loss, L1_loss, time_TSG, scaler
     )
     time_TSG.time_tot.append(time.time() - time_startTSG)
     # <<< TSG ===
 
-    return deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, scaler, time_ 
+    return deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, time_, scaler
