@@ -1,5 +1,5 @@
 {
-  "device": "gpu",
+  "device": "cuda",
   "batch_size": 16,
   "epochs": 500,
   "num_workers": 4,
