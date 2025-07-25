@@ -136,6 +136,13 @@ class TSD:
     def __init__(self, config):
         self.config = config
 
+        x = torch.linspace(-1.0, 1.0, steps=5)
+        y = torch.linspace(-1.0, 1.0, steps=5)
+        self.target_control_points = torch.tensor(list(itertools.product(x, y)), device=self.config.DEVICE)
+
+        # We need height and width later — we initialize tps at the first doTSD call or specify height/width during construction with
+        self.tps = None
+
     def grid_sample(
         self,
         input,
@@ -156,23 +163,24 @@ class TSD:
         imgs
     ):
         height, width = imgs.shape[2], imgs.shape[3]
+
+        # Create TPSGridGen only once
+        if self.tps is None:
+            self.tps = TPSGridGen(self.config, height, width, self.target_control_points)
+
         tps_img = []
         for i in range(imgs.shape[0]):
-            img = imgs[i, :, :, :]
-            img = img.unsqueeze(0)
-            target_control_points = torch.Tensor(list(itertools.product(
-                torch.arange(-1.0, 1.00001, 2.0 / 4),
-                torch.arange(-1.0, 1.00001, 2.0 / 4),
-            ))).to(self.config.DEVICE)
-            source_control_points = target_control_points + torch.Tensor(target_control_points.size()).uniform_(-0.1, 0.1).to(self.config.DEVICE)
-            # source_control_points = target_control_points + 0.01*torch.ones(target_control_points.size()).to(device)
-            tps = TPSGridGen(self.config, height, width, target_control_points)
-            source_coordinate = tps(Variable(torch.unsqueeze(source_control_points, 0)))
+            img = imgs[i, :, :, :].unsqueeze(0)
+            
+            source_control_points = self.target_control_points + torch.Tensor(self.target_control_points.size()).uniform_(-0.1, 0.1).to(self.config.DEVICE)
+
+            source_coordinate = self.tps(torch.unsqueeze(source_control_points, 0))
 
             grid = source_coordinate.view(1, height, width, 2)
             canvas = Variable(torch.Tensor(1, 3, height, width).fill_(1.0)).to(self.config.DEVICE)
             target_image = self.grid_sample(img, grid, canvas)
             tps_img.append(target_image)
+
         tps_img = torch.cat(tps_img, dim=0)
         return tps_img
     
@@ -256,10 +264,10 @@ class TSG:
         self,
         config,
         emse,
-        tsd,
         img,
         label,
-        tpsImg,
+        e_extend,
+        e_deformed,
         netD,
         netG,
         cls,
@@ -268,8 +276,8 @@ class TSG:
         optimC,
         CE_loss,
         L1_loss,
-        scaler,
         time_TSG,
+        scaler,
         downSize=12
     ):
         # Initialize loss variables
@@ -277,93 +285,101 @@ class TSG:
 
         # pdb.set_trace()
         mn_batch = img.shape[0]
-        
-        # blur image to minimize impact of texture
-        img_blur = self.blur_image(img, downSize)
 
-        # Zero the gradients
+        # === Step 0: Precompute blurred texture map Itxt ===
+        img_blur = self.blur_image(img, downSize)  # corresponds to Itxt in the paper
+
+        # === Step 1: Phase 1 – Rough Generation (Eextend + Itxt) ===
+        # Generate rough image (Stage 1)
+        G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
+
+        # Discriminator output on real and fake
+        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+        D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
+
+        # === Train Discriminator (Stage 1) ===
         netG.zero_grad()
         netD.zero_grad()
-        
-        # classifier in evaluation mode
-        cls.eval()
-
-        # Discriminator result of real image without blur
-        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-
-        # Generate image and get Discriminator result
-        G_result = self.generateImg(mn_batch, netG, tpsImg, img_blur)
-        D_result_genImg, aux_output_genImg = self.getDResult(G_result, netD)
-
-        # === Discriminator training ===
         time_startTrainD = time.time()
-        # Compute the classification loss of discriminator
         D_celoss = CE_loss(aux_output_realImg, label)
-        # Compute the whole loss of discriminator
-        loss.D_loss = (-D_result_realImg + D_result_genImg) + 0.5 * D_celoss
-        # Calculate gradient of discriminator
-        scaler.scale(loss.D_loss).backward(retain_graph=True) #D_loss.backward()
-        # Update the discriminator by calling optimizer
-        scaler.step(optimD) #optimD.step()
+        loss.stage1_D_loss = (-D_result_realImg + D_result_roughImg) + 0.5 * D_celoss
+        scaler.scale(loss.stage1_D_loss).backward(retain_graph=True)
+        scaler.step(optimD)
+        scaler.update()
+        # loss.D_loss.backward(retain_graph=True)
+        # optimD.step()
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
 
-        # === Classifier loss ===
+        # === Train Generator (Stage 1) ===
+        netG.zero_grad()
+        netD.zero_grad()
+        time_startTrainG1 = time.time()
+        img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+        G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
+        G_celoss_rough = CE_loss(aux_output_roughImg.detach(), label).sum()
+
+        # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
+        loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
+        scaler.scale(loss.stage1_G_loss).backward()
+        scaler.step(optimG)
+        scaler.update()
+        # loss.stage1_G_loss.backward()
+        # optimG.step()
+        time_TSG.time_trainG1.append(time.time() - time_startTrainG1)
+
+        # === Step 2: Phase 2 – Fine Tuning (Edeform + Itxt) ===
+        netG.zero_grad()
+        netD.zero_grad()
+        cls.eval()
+
+        # Generate fine image from deformed edge map
+        G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
+        D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
+
+        # === Classifier Loss ===
         time_startTrainCls = time.time()
         if config.TRAIN_CLS:
-            # Resize to 299x299
-            G_result_resized = F.interpolate(G_result, size=(299, 299), mode='bilinear', align_corners=False)
-            # Normalize (if needed)
-            normalize = self.myNormalize()
-            # If Tensor [B, 1, H, W], duplicate up to 3-Channel
-            if G_result_resized.shape[1] == 1:
-                G_result_resized = G_result_resized.repeat(1, 3, 1, 1)
-            # Apply normalization
-            G_result_norm = normalize(G_result_resized) # torch.stack([normalize(img) for img in G_result_resized])
-            # Compute the classification loss of classifier
-            cls_output = cls(G_result_norm.detach())  # nur logits
+            G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
+            if G_fine_resized.shape[1] == 1:
+                G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
+            G_fine_norm = self.myNormalize()(G_fine_resized)
+            cls_output = cls(G_fine_norm.detach())
             loss.cls_loss = CE_loss(cls_output, label)
         else:
-            # Classifier only in Evaluation
             loss.cls_loss = torch.tensor(0.0).to(self.config.DEVICE)
         time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
 
-        # === Generator training ===
-        time_startTrainG = time.time()
-        # If Image is grayscale (only 1 channel), repeat / duplicate the channel to 3
-        img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-        G_L1_loss = L1_loss(G_result, img_for_loss)
-        # Compute the classification loss of generator and sum them up
-        aux_output_genImg_ = aux_output_genImg.detach()
-        G_celoss = CE_loss(aux_output_genImg_, label).sum()
-        # Loss of edge information
-        combined_gray = tpsImg[:, 0:1, : , :]
-        edge_loss = L1_loss(
-            emse.get_info(G_result),
-            combined_gray
-        )
-        # Compute the whole loss of generator
-        G_loss_tot = G_L1_loss - D_result_genImg.detach() + 0.5 * G_celoss + edge_loss + loss.cls_loss
-        # Calculate gradient of generator
-        scaler.scale(G_loss_tot).backward() #G_loss_tot.backward()
-        loss.G_loss_tot = G_loss_tot
-        # Update the generator by calling optimizer
-        scaler.step(optimG) #optimG.step()
-        time_TSG.time_trainG2.append(time.time() - time_startTrainG)
-        
-        time_startScaler = time.time()
-        scaler.update()
-        time_TSG.time_Scaler.append(time.time() - time_startScaler)
+        # === Edge preservation loss (Ledge) ===
+        edge_map_from_syn = emse.get_info(G_fine)
+        edge_loss = L1_loss(edge_map_from_syn, e_deformed[:, 0:1, :, :])  # compare gray channels
 
-        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, scaler, time_TSG
+        # === Generator loss (Phase 2) ===
+        netG.zero_grad()
+        netD.zero_grad()
+        time_startTrainG2 = time.time()
+        img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+        G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
+        G_celoss_fine = CE_loss(aux_output_fineImg.detach(), label).sum()
+
+        # Total loss = GAN + Classification + Shape-Preservation
+        loss.stage2_G_loss = G_L1_loss_fine - D_result_fineImg.detach() + G_celoss_fine + edge_loss + loss.cls_loss
+        scaler.scale(loss.stage2_G_loss).backward()
+        scaler.step(optimG)
+        scaler.update()
+        # loss.stage2_G_loss.backward()
+        # optimG.step()
+        time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
+
+        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_TSG, scaler
     
     def doTSG_testing(
         self,
         config,
         emse,
-        tsd,
         img,
         label,
-        tpsImg,
+        e_extend,
+        e_deformed,
         netD,
         netG,
         cls,
@@ -376,60 +392,64 @@ class TSG:
 
         # pdb.set_trace()
         mn_batch = img.shape[0]
-        
-        # blur image to minimize impact of texture
-        img_blur = self.blur_image(img, downSize)
 
-        # set netG, netD, cls to evaluation mode
+        # === Step 0: Precompute blurred texture map Itxt ===
+        img_blur = self.blur_image(img, downSize)  # corresponds to Itxt in the paper
+
+        # === Step 1: Phase 1 – Rough Generation (Eextend + Itxt) ===
+        # Generate rough image (Stage 1)
+        G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
+
+        # Discriminator output on real and fake
+        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+        D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
+
+        # === Train Discriminator (Stage 1) ===
+        netG.eval()
+        netD.eval()
+        D_celoss = CE_loss(aux_output_realImg, label)
+        loss.stage1_D_loss = (-D_result_realImg + D_result_roughImg) + 0.5 * D_celoss
+
+        # === Train Generator (Stage 1) ===
+        netG.eval()
+        netD.eval()
+        img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+        G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
+        G_celoss_rough = CE_loss(aux_output_roughImg.detach(), label).sum()
+
+        # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
+        loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
+
+        # === Step 2: Phase 2 – Fine Tuning (Edeform + Itxt) ===
         netG.eval()
         netD.eval()
         cls.eval()
 
-        # Discriminator result of real image without blur
-        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+        # Generate fine image from deformed edge map
+        G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
+        D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
 
-        # Generate image and get Discriminator result
-        G_result = self.generateImg(mn_batch, netG, tpsImg, img_blur)
-        D_result_genImg, aux_output_genImg = self.getDResult(G_result, netD)
+        # === Classifier Loss ===
+        G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
+        if G_fine_resized.shape[1] == 1:
+            G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
+        G_fine_norm = self.myNormalize()(G_fine_resized)
+        cls_output = cls(G_fine_norm.detach())
+        loss.cls_loss = CE_loss(cls_output, label)
+        cls_prediction = torch.argmax(cls_output, dim=1)
 
-        # === Discriminator loss ===
-        # Compute the classification loss of discriminator
-        D_celoss = CE_loss(aux_output_realImg, label)
-        # Compute the whole loss of discriminator
-        loss.D_loss = (-D_result_realImg + D_result_genImg) + 0.5 * D_celoss
+        # === Edge preservation loss (Ledge) ===
+        edge_map_from_syn = emse.get_info(G_fine)
+        edge_loss = L1_loss(edge_map_from_syn, e_deformed[:, 0:1, :, :])  # compare gray channels
 
-        # === Classifier loss ===
-        if config.TRAIN_CLS:
-            # Resize to 299x299
-            G_result_resized = F.interpolate(G_result, size=(299, 299), mode='bilinear', align_corners=False)
-            # Normalize (if needed)
-            normalize = self.myNormalize()
-            # If Tensor [B, 1, H, W], duplicate up to 3-Channel
-            if G_result_resized.shape[1] == 1:
-                G_result_resized = G_result_resized.repeat(1, 3, 1, 1)
-            # Apply normalization
-            G_result_norm = torch.stack([normalize(img) for img in G_result_resized])
-            # Compute the classification loss of classifier
-            cls_output = cls(G_result_norm)  # nur logits
-            loss.cls_loss = CE_loss(cls_output, label)
-            cls_prediction = torch.argmax(cls_output, dim=1)
-        else:
-            # Classifier only in Evaluation
-            loss.cls_loss = torch.tensor(0.0).to(self.config.DEVICE)
-
-        # === Generator loss ===
-        # If Image is grayscale (only 1 channel), repeat / duplicate the channel to 3
+        # === Generator loss (Phase 2) ===
+        netG.eval()
+        netD.eval()
         img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-        G_L1_loss = L1_loss(G_result, img_for_loss)
-        # Compute the classification loss of generator and sum them up
-        G_celoss = CE_loss(aux_output_genImg, label).sum()
-        # Loss of edge information
-        combined_gray = tpsImg[:, 0:1, : , :]
-        edge_loss = L1_loss(
-            emse.get_info(G_result),
-            combined_gray
-        )
-        # Compute the whole loss of generator
-        loss.G_loss_tot = G_L1_loss - D_result_genImg + 0.5 * G_celoss + edge_loss + loss.cls_loss
+        G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
+        G_celoss_fine = CE_loss(aux_output_fineImg.detach(), label).sum()
+
+        # Total loss = GAN + Classification + Shape-Preservation
+        loss.stage2_G_loss = G_L1_loss_fine - D_result_fineImg.detach() + G_celoss_fine + edge_loss + loss.cls_loss
 
         return loss, cls_prediction
