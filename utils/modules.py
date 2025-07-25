@@ -253,8 +253,6 @@ class TSG:
         L1_loss,
         time_TSG,
         scaler,
-        time_TSG,
-        scaler,
         downSize=12
     ):
         #pdb.set_trace()
