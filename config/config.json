@@ -1,6 +1,6 @@
 {
   "device": "cuda",
-  "batch_size": 11,
+  "batch_size": 10,
   "epochs": 500,
   "num_workers": 8,
 
