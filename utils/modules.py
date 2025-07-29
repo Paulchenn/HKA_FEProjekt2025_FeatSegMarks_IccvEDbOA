@@ -220,8 +220,6 @@ class TSG:
 
         G_result = netG(z_, deformedImg, blurImg)
 
-        print(f"G_result contiguous in generateImg: {G_result.is_contiguous()}; Line 249" )
-
         return G_result
     
     def getDResult(
@@ -229,7 +227,6 @@ class TSG:
         img,
         netD
     ):
-        print("img contiguous in getDResult:", img.is_contiguous(), "; Line 258")
         D_result, aux_output = netD(img)
         D_result = D_result.squeeze()
 
@@ -398,8 +395,6 @@ class TSG:
         G_rough = G_rough.contiguous()
 
         # Discriminator output on real and fake
-        print(f"img-shape: {img.shape}; Line 413")
-        print(f"G-rough-shape: {G_rough.shape}; Line 414")
         D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
         D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
 
