@@ -393,7 +393,7 @@ if __name__ == "__main__":
         # Only validate every N epochs
         if epoch % 1 == 0:
             print("----------")
-            print(f"Validating at Epch {epoch + 1} / {config.EPOCHS}:")
+            print(f"Validating at Epoch {epoch + 1} / {config.EPOCHS}:")
             with torch.no_grad():
                 for i, (img, label) in enumerate(val_loader):
                     # For Debugging
