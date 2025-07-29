@@ -227,6 +227,7 @@ class TSG:
         img,
         netD
     ):
+        print(f"img-shape in getDResult(): {img.shape}")
         D_result, aux_output = netD(img)
         D_result = D_result.squeeze()
 
@@ -398,6 +399,8 @@ class TSG:
         print(f"img-shape: {img.shape}")
         print(f"G-rough-shape: {G_rough.shape}")
         D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+        print(f"img-shape: {img.shape}")
+        print(f"G-rough-shape: {G_rough.shape}")
         D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
 
         # === Train Discriminator (Stage 1) ===
