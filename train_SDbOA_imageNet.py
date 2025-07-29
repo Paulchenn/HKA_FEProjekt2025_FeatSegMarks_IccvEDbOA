@@ -416,17 +416,17 @@ if __name__ == "__main__":
 
                     # === Generation and Classification >>>
                     loss, cls_prediction = tsg.doTSG_testing(
-                        config,
-                        emse,
-                        img,
-                        label,
-                        edgeMap,
-                        deformedImg,
-                        netD,
-                        netG,
-                        cls,
-                        CE_loss,
-                        L1_loss
+                        config=config,
+                        emse=emse,
+                        img=img,
+                        label=label,
+                        edgeMap=e_extend,
+                        deformedImg=e_deformed,
+                        netD=netD,
+                        netG=netG,
+                        cls=cls,
+                        CE_loss=CE_loss,
+                        L1_loss=L1_loss
                     )
                     # <<< Generation and Classification ===
 
