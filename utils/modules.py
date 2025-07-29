@@ -227,7 +227,7 @@ class TSG:
         img,
         netD
     ):
-        print(f"img-shape in getDResult(): {img.shape}")
+        print("img contiguous in getDResult:", img.is_contiguous())
         D_result, aux_output = netD(img)
         D_result = D_result.squeeze()
 
@@ -381,6 +381,9 @@ class TSG:
         L1_loss,
         downSize=12
     ):
+        print("G_rough contiguous after generateImg:", e_extend.is_contiguous())
+        print("G_rough contiguous after generateImg:", e_deformed.is_contiguous())
+
         # Initialize loss variables
         loss = SimpleNamespace()
 
@@ -398,10 +401,8 @@ class TSG:
         # Discriminator output on real and fake
         print(f"img-shape: {img.shape}")
         print(f"G-rough-shape: {G_rough.shape}")
-        D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
-        print(f"img-shape: {img.shape}")
-        print(f"G-rough-shape: {G_rough.shape}")
         D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+        D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
 
         # === Train Discriminator (Stage 1) ===
         D_celoss = CE_loss(aux_output_realImg, label)
