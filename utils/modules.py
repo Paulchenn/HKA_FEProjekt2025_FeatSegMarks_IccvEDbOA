@@ -246,6 +246,8 @@ class TSG:
 
         G_result = netG(z_, deformedImg, blurImg)
 
+        print(f"G_result contiguous in generateImg: {G_result.is_contiguous()}; Line 249" )
+
         return G_result
     
     def getDResult(
@@ -253,7 +255,7 @@ class TSG:
         img,
         netD
     ):
-        print("img contiguous in getDResult:", img.is_contiguous())
+        print("img contiguous in getDResult:", img.is_contiguous(), "; Line 258")
         D_result, aux_output = netD(img)
         D_result = D_result.squeeze()
 
@@ -403,15 +405,15 @@ class TSG:
         # === Step 1: Phase 1 – Rough Generation (Eextend + Itxt) ===
         # Generate rough image (Stage 1)
         G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
-        print("G_rough contiguous after generateImg:", G_rough.is_contiguous())
+        print("G_rough contiguous after generateImg:", G_rough.is_contiguous(), "; Line 406")
         debug_time = time.time()
         G_rough = G_rough.contiguous()
         print(time.time()-debug_time)
-        print("G_rough contiguous after G_rough.contiguous():", G_rough.is_contiguous())
+        print("G_rough contiguous after G_rough.contiguous():", G_rough.is_contiguous(), "; Line 410")
 
         # Discriminator output on real and fake
-        print(f"img-shape: {img.shape}")
-        print(f"G-rough-shape: {G_rough.shape}")
+        print(f"img-shape: {img.shape}; Line 413")
+        print(f"G-rough-shape: {G_rough.shape}; Line 414")
         D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
         D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
 
