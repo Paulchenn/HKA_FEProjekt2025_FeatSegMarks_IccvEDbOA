@@ -443,10 +443,16 @@ if __name__ == "__main__":
                 config.acc_history.append(acc)
 
                 # Print results
-                print(f"    Accuracy of predicted labels by classifier: correct/total = {correct}/{total} = {acc:.4f}")
-                print(f"    Generator loss: G_L1_loss-D_result_genImg+(0.5*G_celoss)+edge_loss+cls_loss = {loss.G_loss_tot.item():.4f}")
-                print(f"    Discriminator loss: (-D_result_realImg+D_result_genImg)+(0.5*D_celoss) = {loss.D_loss:.4f}")
-                print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
+                print("----------")
+                print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
+                print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
+                print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
+                if config.TRAIN_CLS:
+                    print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
+                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
+                else:
+                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {loss.stage2_G_loss.item():.4f}")
+                print("----------")
 
 
                 if acc > best_acc:
