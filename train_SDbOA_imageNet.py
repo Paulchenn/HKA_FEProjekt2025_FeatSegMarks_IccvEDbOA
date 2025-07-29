@@ -484,9 +484,10 @@ if __name__ == "__main__":
                 epoch_metric = {
                     "epoch": epoch + 1,
                     "accuracy": round(float(acc), 4),
-                    "generator_loss": round(float(loss.G_loss_tot.item()), 4),
-                    "discriminator_loss": round(float(loss.D_loss.item()), 4),
+                    "discriminator_loss": round(float(loss.stage1_D_loss.item()), 4),
                     "classifier_loss": round(float(loss.cls_loss.item()), 4),
+                    "generator_loss_stage1": round(float(loss.stage1_G_loss.item()), 4),
+                    "generator_loss_stage2": round(float(loss.stage2_G_loss.item()), 4),
                     "FPS": round(fps, 2),
                     "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
                     "MMA@3": None,
