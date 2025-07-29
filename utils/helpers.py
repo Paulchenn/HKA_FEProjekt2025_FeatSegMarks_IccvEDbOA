@@ -35,7 +35,7 @@ def get_config(file_path):
     config["DEVICE"] = torch.device(config["device"] if torch.cuda.is_available() else "cpu")
     config["BATCH_SIZE"] = config["batch_size"]
     config["EPOCHS"] = config["epochs"]
-    config["NUM_WORKERS"] = config["num_workers"]
+    config["NUM_WORKERS"] = os.cpu_count()-1
 
     config["PATH_TUNED_D"] = config["path_tuned_D"]
     config["PATH_TUNED_G"] = config["path_tuned_G"]
@@ -172,6 +172,7 @@ def get_train_val_loaders(
     val_subset.dataset.transform = transform_val
 
     # Create loaders
+    print(f"Used num_workers: {config.NUM_WORKERS}")
     train_loader = DataLoader(train_subset, batch_size=config.BATCH_SIZE, shuffle=True,
                               num_workers=config.NUM_WORKERS, pin_memory=pin_memory)
     val_loader = DataLoader(val_subset, batch_size=config.BATCH_SIZE, shuffle=False,

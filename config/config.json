@@ -2,7 +2,7 @@
   "device": "cuda",
   "batch_size": 10,
   "epochs": 500,
-  "num_workers": 8,
+  "num_workers": "!!! WILL BE CALCULATED !!!",
 
   "path_tuned_D": "./Result/2025_07_08__001/ImageNet256/tuned_D/Epoch_001.pth_false",
   "path_tuned_G": "./Result/2025_07_08__001/ImageNet256/tuned_G/Epoch_001.pth_false",
