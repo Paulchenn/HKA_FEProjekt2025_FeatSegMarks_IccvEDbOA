@@ -392,8 +392,6 @@ class TSG:
 
         # === Step 1: Phase 1 – Rough Generation (Eextend + Itxt) ===
         # Generate rough image (Stage 1)
-        print("G_rough contiguous after e_extend:", e_extend.is_contiguous())
-        print("G_rough contiguous after img_blur:", img_blur.is_contiguous())
         G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
         G_rough = G_rough.contiguous()
 
