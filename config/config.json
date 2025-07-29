@@ -22,11 +22,11 @@
   "patience": 100,
   "min_slope": 0.0005,
 
-  "debug_mode": true,
+  "debug_mode": false,
   "debugIterations_strt": 0,
   "debugIterations_amount": 20,
 
-  "show_images": true,
+  "show_images": false,
   "show_images_interval": 10,
 
   "log_interval": 10,
