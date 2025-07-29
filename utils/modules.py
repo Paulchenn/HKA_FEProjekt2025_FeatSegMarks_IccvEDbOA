@@ -404,6 +404,8 @@ class TSG:
         G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
 
         # Discriminator output on real and fake
+        print(f"img-shape: {img.shape}")
+        print(f"G-rough-shape: {G_rough.shape}")
         D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
         D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
 

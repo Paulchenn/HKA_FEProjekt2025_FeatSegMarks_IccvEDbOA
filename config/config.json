@@ -1,6 +1,6 @@
 {
   "device": "cuda",
-  "batch_size": 10,
+  "batch_size": 1,
   "epochs": 500,
   "num_workers": 4,
 
@@ -22,9 +22,9 @@
   "patience": 100,
   "min_slope": 0.0005,
 
-  "debug_mode": false,
+  "debug_mode": true,
   "debugIterations_strt": 0,
-  "debugIterations_amount": 6,
+  "debugIterations_amount": 20,
 
   "show_images": true,
   "show_images_interval": 10,
