@@ -398,10 +398,10 @@ class TSG:
         # Discriminator output on real and fake
         print(f"img-shape: {img.shape}")
         print(f"G-rough-shape: {G_rough.shape}")
-        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+        D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
         print(f"img-shape: {img.shape}")
         print(f"G-rough-shape: {G_rough.shape}")
-        D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
+        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
 
         # === Train Discriminator (Stage 1) ===
         D_celoss = CE_loss(aux_output_realImg, label)
