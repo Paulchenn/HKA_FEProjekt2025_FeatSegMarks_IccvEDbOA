@@ -1,8 +1,18 @@
 torch
 torchvision
-tqdm
 requests
 Pillow
-numpy
-scikit-image
+# Grundlegende Python-Dependencies
+numpy==1.26.4
+opencv-contrib-python
+opencv-contrib-python-headless==4.10.0.84
+tqdm
 matplotlib
+kornia==0.7.2
+gdown
+tensorboard
+h5py
+scikit-image
+
+# Externes GitHub-Paket
+git+https://github.com/PoseLib/PoseLib.git
