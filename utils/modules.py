@@ -21,7 +21,6 @@ from torchvision import transforms
 from torch import amp
 
 
-
 class EMSE:
     """
     Edge map-based shape encoding (EMSE)
@@ -257,7 +256,7 @@ class TSG:
     ):
         #pdb.set_trace()
         autocast_ctx = nullcontext() #amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
-
+        
         # Initialize loss variables
         loss = SimpleNamespace()
 
