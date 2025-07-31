@@ -26,7 +26,8 @@
   "debugIterations_strt": 0,
   "debugIterations_amount": 20,
 
-  "show_images": false,
+  "show_imgEmseTsd": false,
+  "show_tsg": false,
   "show_images_interval": 10,
 
   "log_interval": 10,
