@@ -304,7 +304,7 @@ def show_result(
             img = np.clip(img, 0, 1)
             ax[i, j].imshow(img)
 
-    label = 'Epoch {0}'.format(num_epoch)
+    label = 'Epoch {0}'.format(num_epoch+1)
     fig.text(0.5, 0.04, label, ha='center')
 
     if save:
@@ -325,55 +325,3 @@ def show_result(
     else:
         plt.close()
 
-
-def do_iteration(
-        i,
-        config,
-        img,
-        label,
-        emse,
-        tsd,
-        tsg,
-        time_EMSE,
-        time_TSD,
-        time_TSG,
-        netD,
-        netG,
-        cls,
-        optimD,
-        optimG,
-        optimC,
-        CE_loss,
-        L1_loss,
-        scaler
-):
-    # === EMSE >>>
-    time_startEMSE = time.time()
-    edgeMap = emse.doEMSE(img)
-    time_EMSE.append(time.time() - time_startEMSE)
-    # <<< EMSE ===
-
-    # === TSD >>>
-    time_startTSD = time.time()
-    deformedImg = tsd.doTSD(edgeMap)
-    time_TSD.append(time.time() - time_startTSD)
-    # <<< TSD ===
-
-    # === Show images depending on configuration ===
-    if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
-        show_images(
-            img,
-            deformedImg,
-            edgeMap
-        )
-
-    # === TSG >>>
-    time_startTSG = time.time()
-    netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, time_, scaler = tsg.doTSG_training(
-        config, emse, img, label, edgeMap, deformedImg, netD, netG, cls,
-        optimD, optimG, optimC, CE_loss, L1_loss, time_TSG, scaler
-    )
-    time_TSG.time_tot.append(time.time() - time_startTSG)
-    # <<< TSG ===
-
-    return deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss_tot, time_, scaler
