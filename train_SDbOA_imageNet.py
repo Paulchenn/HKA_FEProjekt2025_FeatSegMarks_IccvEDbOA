@@ -36,6 +36,7 @@ if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
 if __name__ == "__main__":
+    print("Version: V1.1")
     # # start debugging
     # pdb.set_trace()
 
@@ -88,8 +89,9 @@ if __name__ == "__main__":
     
     # === Initialize networks (and move to CPU/GPU) ===
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
-    netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE)             # Discriminator to distinguish real/fake images
-    cls     = models.inception_v3(pretrained=True) # ResNet18(BasicBlock, num_classes=config.NUM_CLASSES).to(config.DEVICE)   # Classifier (here: ResNet-18)
+    netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
+    cls     = models.resnet18(pretrained=True)
+    cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
     cls     = cls.to(config.DEVICE)
     
     # === Load checkpoints
@@ -219,7 +221,7 @@ if __name__ == "__main__":
         # === Training Phase ===
         netG.train()
         netD.train()
-        cls.train()
+        cls.eval()
 
         # Reduce learning rate after 60 epochs
         if epoch == 60:
@@ -251,51 +253,35 @@ if __name__ == "__main__":
 
             img = img.to(config.DEVICE, non_blocking=True)
             label = label.to(config.DEVICE, non_blocking=True)
-            if False: #not config.DEVICE.type=="cpu":
-                with torch.amp.autocast(config.DEVICE.type):
-                    deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = do_iteration(
-                        i,
-                        config,
-                        img,
-                        label,
-                        emse,
-                        tsd,
-                        tsg,
-                        time_EMSE,
-                        time_TSD,
-                        time_TSG,
-                        netD,
-                        netG,
-                        cls,
-                        optimD,
-                        optimG,
-                        optimC,
-                        CE_loss,
-                        L1_loss,
-                        scaler
-                    )
-            else:
-                deformedImg, emse, tsd, tsg, time_EMSE, time_TSD, time_TSG, netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = do_iteration(
-                    i,
-                    config,
+
+            # === EMSE >>>
+            time_startEMSE = time.time()
+            edgeMap = emse.doEMSE(img)
+            time_EMSE.append(time.time() - time_startEMSE)
+            # <<< EMSE ===
+
+            # === TSD >>>
+            time_startTSD = time.time()
+            deformedImg = tsd.doTSD(edgeMap)
+            time_TSD.append(time.time() - time_startTSD)
+            # <<< TSD ===
+
+            # === Show images depending on configuration ===
+            if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
+                show_images(
                     img,
-                    label,
-                    emse,
-                    tsd,
-                    tsg,
-                    time_EMSE,
-                    time_TSD,
-                    time_TSG,
-                    netD,
-                    netG,
-                    cls,
-                    optimD,
-                    optimG,
-                    optimC,
-                    CE_loss,
-                    L1_loss,
-                    scaler
+                    deformedImg,
+                    edgeMap
                 )
+
+            # === TSG >>>
+            time_startTSG = time.time()
+            netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = tsg.doTSG_training(
+                i, config, emse, img, label, edgeMap, deformedImg, netD, netG, cls,
+                optimD, optimG, optimC, CE_loss, L1_loss, time_TSG, scaler
+            )
+            time_TSG.time_tot.append(time.time() - time_startTSG)
+            # <<< TSG ===
 
             time_Iteration.append(time.time() - time_startIteration)
 
@@ -444,7 +430,8 @@ if __name__ == "__main__":
 
                 # Print results
                 print("----------")
-                print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
+                print(f"Epoch[{epoch + 1} / {config.EPOCHS}] LOSS:")
+                print(f"    accuracy: correct/total = {correct}/{total} = {acc}")
                 print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
                 print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
                 if config.TRAIN_CLS:
@@ -483,11 +470,11 @@ if __name__ == "__main__":
                 # === Speichere Metriken dieser Epoche ===
                 epoch_metric = {
                     "epoch": epoch + 1,
-                    "accuracy": round(float(acc), 4),
-                    "discriminator_loss": round(float(loss.stage1_D_loss.item()), 4),
-                    "classifier_loss": round(float(loss.cls_loss.item()), 4),
-                    "generator_loss_stage1": round(float(loss.stage1_G_loss.item()), 4),
-                    "generator_loss_stage2": round(float(loss.stage2_G_loss.item()), 4),
+                    "accuracy": float(acc),
+                    "discriminator_loss": float(loss.stage1_D_loss.item()),
+                    "classifier_loss": float(loss.cls_loss.item()),
+                    "generator_loss_stage1": float(loss.stage1_G_loss.item()),
+                    "generator_loss_stage2": float(loss.stage2_G_loss.item()),
                     "FPS": round(fps, 2),
                     "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
                     "MMA@3": None,
