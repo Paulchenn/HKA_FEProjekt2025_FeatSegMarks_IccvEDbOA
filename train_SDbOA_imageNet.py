@@ -74,6 +74,7 @@ if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
 if __name__ == "__main__":
+    print("Version: V1.1")
     # # start debugging
     # pdb.set_trace()
 
