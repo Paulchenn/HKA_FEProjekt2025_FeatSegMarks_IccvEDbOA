@@ -1,4 +1,5 @@
 import json
+from signal import pause
 import numpy as np
 import itertools
 import pdb
@@ -10,11 +11,14 @@ from skimage.feature import canny
 from utils.tps_grid_gen import TPSGridGen
 from matplotlib import pyplot as plt
 from types import SimpleNamespace
+from contextlib import nullcontext
+from utils.helpers import *
 
 import torch
 from torch.autograd import Variable
 import torch.nn.functional as F
 from torchvision import transforms
+from torch import amp
 
 
 class EMSE:
@@ -262,6 +266,7 @@ class TSG:
     
     def doTSG_training(
         self,
+        iteration,
         config,
         emse,
         img,
@@ -280,98 +285,112 @@ class TSG:
         scaler,
         downSize=12
     ):
+        #pdb.set_trace()
+        autocast_ctx = amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
+
         # Initialize loss variables
         loss = SimpleNamespace()
 
-        # pdb.set_trace()
+        # get the batch size
         mn_batch = img.shape[0]
 
         # === Step 0: Precompute blurred texture map Itxt ===
         img_blur = self.blur_image(img, downSize)  # corresponds to Itxt in the paper
 
         # === Step 1: Phase 1 – Rough Generation (Eextend + Itxt) ===
-        # Generate rough image (Stage 1)
-        G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
+        time_startTrainD = time.time()
 
-        # Discriminator output on real and fake
-        D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-        D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
+        with nullcontext():
+            # Generate rough image (Stage 1)
+            G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
+
+            # Discriminator output on real and fake
+            D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+            D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
+            D_celoss = CE_loss(aux_output_realImg, label)
+            loss.stage1_D_loss = (-D_result_realImg + D_result_roughImg) + 0.5 * D_celoss
 
         # === Train Discriminator (Stage 1) ===
-        netG.zero_grad()
         netD.zero_grad()
-        time_startTrainD = time.time()
-        D_celoss = CE_loss(aux_output_realImg, label)
-        loss.stage1_D_loss = (-D_result_realImg + D_result_roughImg) + 0.5 * D_celoss
-        #scaler.scale(loss.stage1_D_loss).backward(retain_graph=True)
-        #scaler.step(optimD)
-        #scaler.update()
-        loss.stage1_D_loss.backward(retain_graph=True)
-        optimD.step()
+        optimD.zero_grad()
+        scaler.scale(loss.stage1_D_loss).backward(retain_graph=True)
+        scaler.step(optimD)
+        scaler.update()
+
+        # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
 
         # === Train Generator (Stage 1) ===
-        netG.zero_grad()
-        netD.zero_grad()
         time_startTrainG1 = time.time()
-        img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-        G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
-        G_celoss_rough = CE_loss(aux_output_roughImg.detach(), label).sum()
 
-        # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
-        loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
-        #scaler.scale(loss.stage1_G_loss).backward()
-        #scaler.step(optimG)
-        #scaler.update()
-        loss.stage1_G_loss.backward()
-        optimG.step()
+        with autocast_ctx:
+            img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+            G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
+            G_celoss_rough = CE_loss(aux_output_roughImg.detach(), label).mean()
+            # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
+            loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
+
+        netG.zero_grad()
+        optimG.zero_grad()
+        scaler.scale(loss.stage1_G_loss).backward()
+        scaler.step(optimG)
+        scaler.update()
+        
+        # get time needed for generator training in stage 1
         time_TSG.time_trainG1.append(time.time() - time_startTrainG1)
 
         # === Step 2: Phase 2 – Fine Tuning (Edeform + Itxt) ===
-        netG.zero_grad()
-        netD.zero_grad()
-        cls.eval()
-
-        # Generate fine image from deformed edge map
-        G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
-        D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
-
-        # === Classifier Loss ===
-        time_startTrainCls = time.time()
-        if config.TRAIN_CLS:
-            G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
-            if G_fine_resized.shape[1] == 1:
-                G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
-            G_fine_norm = self.myNormalize()(G_fine_resized)
-            cls_output = cls(G_fine_norm.detach())
-            #G_fine_norm = self.myNormalize()(G_fine_resized)
-            #with torch.cuda.amp.autocast(enabled=False):
-            #    cls_output = cls(G_fine_norm.detach().float())
-            loss.cls_loss = CE_loss(cls_output, label)
-        else:
-            loss.cls_loss = torch.tensor(0.0).to(self.config.DEVICE)
-        time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
-
-        # === Edge preservation loss (Ledge) ===
-        edge_map_from_syn = emse.get_info(G_fine)
-        edge_loss = L1_loss(edge_map_from_syn, e_deformed[:, 0:1, :, :])  # compare gray channels
-
-        # === Generator loss (Phase 2) ===
-        netG.zero_grad()
-        netD.zero_grad()
         time_startTrainG2 = time.time()
-        img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-        G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
-        G_celoss_fine = CE_loss(aux_output_fineImg.detach(), label).sum()
 
-        # Total loss = GAN + Classification + Shape-Preservation
-        loss.stage2_G_loss = G_L1_loss_fine - D_result_fineImg.detach() + G_celoss_fine + edge_loss + loss.cls_loss
-        #scaler.scale(loss.stage2_G_loss).backward()
-        #scaler.step(optimG)
-        #scaler.update()
-        loss.stage2_G_loss.backward()
-        optimG.step()
+        with autocast_ctx:
+            # Generate fine image from deformed edge map
+            G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
+            D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
+
+            # === Classifier Loss ===
+            time_startTrainCls = time.time()
+            if config.TRAIN_CLS:
+                G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
+                if G_fine_resized.shape[1] == 1:
+                    G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
+                G_fine_norm = self.myNormalize()(G_fine_resized)
+                cls_output = cls(G_fine_norm.detach())
+                loss.cls_loss = CE_loss(cls_output, label)
+            else:
+                loss.cls_loss = torch.tensor(0.0).to(config.DEVICE)
+            time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
+
+            # === Edge preservation loss (Ledge) ===
+            edge_map_from_syn = emse.get_info(G_fine)
+            edge_loss = L1_loss(edge_map_from_syn, e_deformed[:, 0:1, :, :])  # compare gray channels
+
+            # === Generator loss (Phase 2) ===
+            img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+            G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
+            G_celoss_fine = CE_loss(aux_output_fineImg.detach(), label).sum()
+            # Total loss = GAN + Classification + Shape-Preservation
+            loss.stage2_G_loss = G_L1_loss_fine - D_result_fineImg.detach() + G_celoss_fine + edge_loss + loss.cls_loss
+
+        netG.zero_grad()
+        optimG.zero_grad()
+        scaler.scale(loss.stage2_G_loss).backward()
+        scaler.step(optimG)
+        scaler.update()
+        
         time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
+
+        # if config.SHOW_IMAGES and iteration % config.SHOW_IMAGES_INTERVAL == 0:
+        #     #pdb.set_trace()
+        #     show_images(
+        #         img,
+        #         img,
+        #         img_blur
+        #     )
+        #     show_images(
+        #         G_rough,
+        #         G_fine,
+        #         G_fine_resized
+        #     )
 
         return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_TSG, scaler
     
@@ -409,14 +428,10 @@ class TSG:
         D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
 
         # === Train Discriminator (Stage 1) ===
-        netG.eval()
-        netD.eval()
         D_celoss = CE_loss(aux_output_realImg, label)
         loss.stage1_D_loss = (-D_result_realImg + D_result_roughImg) + 0.5 * D_celoss
 
         # === Train Generator (Stage 1) ===
-        netG.eval()
-        netD.eval()
         img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
         G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
         G_celoss_rough = CE_loss(aux_output_roughImg.detach(), label).sum()
@@ -425,9 +440,6 @@ class TSG:
         loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
 
         # === Step 2: Phase 2 – Fine Tuning (Edeform + Itxt) ===
-        netG.eval()
-        netD.eval()
-        cls.eval()
 
         # Generate fine image from deformed edge map
         G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
@@ -448,8 +460,6 @@ class TSG:
         edge_loss = L1_loss(edge_map_from_syn, e_deformed[:, 0:1, :, :])  # compare gray channels
 
         # === Generator loss (Phase 2) ===
-        netG.eval()
-        netD.eval()
         img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
         G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
         G_celoss_fine = CE_loss(aux_output_fineImg.detach(), label).sum()
