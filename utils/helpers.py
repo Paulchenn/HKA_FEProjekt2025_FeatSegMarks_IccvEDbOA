@@ -51,7 +51,8 @@ def get_config(file_path):
     config["acc_history"] = deque(maxlen=config["patience"])
     config["MIN_SLOPE"] = config["min_slope"]
 
-    config["SHOW_IMAGES"] = config["show_images"]
+    config["SHOW_IMG_EMSE_TSD"] = config["show_imgEmseTsd"]
+    config["SHOW_TSG"] = config["show_tsg"]
     config["SHOW_IMAGES_INTERVAL"] = config["show_images_interval"]
 
     config["LOG_INTERVAL"] = config["log_interval"]
@@ -224,7 +225,7 @@ def get_train_val_loaders(
     return train_loader, val_loader
 
 
-def show_images(
+def show_imgEmseTsd(
     img,
     deformedImg,
     edgeMap
@@ -240,23 +241,94 @@ def show_images(
     plt.figure(figsize=(10, 5))  # Adjusted figure size
     plt.subplot(1, 3, 1)
     plt.axis('off')
-    plt.title('Original Image')
+    plt.title('original image')
     plt.imshow(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5)
 
     plt.subplot(1, 3, 2)
     plt.axis('off')
-    plt.title('Deformed Image')
-    deformedImg_clipped = deformedImg[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5
-    deformedImg_clipped = np.clip(deformedImg_clipped, 0, 1)
-    plt.imshow(deformedImg_clipped)
-
-    plt.subplot(1, 3, 3)
-    plt.axis('off')
-    plt.title('Edge Map')
+    plt.title('edge map')
     edgeMap_clipped = edgeMap[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5
     edgeMap_clipped = np.clip(edgeMap_clipped, 0, 1)
     plt.imshow(edgeMap_clipped)
 
+    plt.subplot(1, 3, 3)
+    plt.axis('off')
+    plt.title('deformed image')
+    deformedImg_clipped = deformedImg[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5
+    deformedImg_clipped = np.clip(deformedImg_clipped, 0, 1)
+    plt.imshow(deformedImg_clipped)
+
+    plt.show(block=False)
+    plt.pause(2)  # Show for 2 seconds (adjust as needed)
+    plt.close()
+
+
+def show_tsg(
+    img,
+    img_blur,
+    img_for_loss,
+    G_rough,
+    G_fine,
+    G_fine_resized,
+    G_fine_norm,
+    edge_map_from_syn
+):
+    """
+    Show the original image, deformed image, and edge map.
+    :param img:
+    :param img_blur:
+    :param img_for_loss:
+    :param G_rough:
+    :param G_fine:
+    :param G_fine_resized:
+    :param G_fine_norm:
+    :param edge_map_from_syn
+    """
+    
+    # === Show the original and deformed image ===
+    plt.figure(figsize=(10, 5))  # Adjusted figure size
+    plt.subplot(2, 4, 1)
+    plt.axis('off')
+    plt.title('original image')
+    plt.imshow(np.clip(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(2, 4, 2)
+    plt.axis('off')
+    plt.title('blured image')
+    plt.imshow(np.clip(img_blur[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(2, 4, 3)
+    plt.axis('off')
+    plt.title('image for loss')
+    plt.imshow(np.clip(img_for_loss[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(2, 4, 4)
+    plt.axis('off')
+    plt.title('gen img s1')
+    plt.imshow(np.clip(G_rough[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(2, 4, 5)
+    plt.axis('off')
+    plt.title('gen img s2')
+    G_fine_f32 = G_fine.float()
+    plt.imshow(np.clip(G_fine_f32[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(2, 4, 6)
+    plt.axis('off')
+    plt.title('resized img s2')
+    plt.imshow(np.clip(G_fine_resized[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(2, 4, 7)
+    plt.axis('off')
+    plt.title('norm res img s2')
+    plt.imshow(np.clip(G_fine_norm[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(2, 4, 8)
+    plt.axis('off')
+    plt.title('edge map gem img s2')
+    plt.imshow(np.clip(edge_map_from_syn[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    #pdb.set_trace()
     plt.show(block=False)
     plt.pause(2)  # Show for 2 seconds (adjust as needed)
     plt.close()

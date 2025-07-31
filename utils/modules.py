@@ -286,7 +286,7 @@ class TSG:
         downSize=12
     ):
         #pdb.set_trace()
-        autocast_ctx = amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
+        autocast_ctx = nullcontext() #amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
 
         # Initialize loss variables
         loss = SimpleNamespace()
@@ -379,18 +379,18 @@ class TSG:
         
         time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
 
-        # if config.SHOW_IMAGES and iteration % config.SHOW_IMAGES_INTERVAL == 0:
-        #     #pdb.set_trace()
-        #     show_images(
-        #         img,
-        #         img,
-        #         img_blur
-        #     )
-        #     show_images(
-        #         G_rough,
-        #         G_fine,
-        #         G_fine_resized
-        #     )
+        if config.SHOW_TSG and iteration % config.SHOW_IMAGES_INTERVAL == 0:
+            #pdb.set_trace()
+            show_tsg(
+                img,
+                img_blur,
+                img_for_loss,
+                G_rough,
+                G_fine,
+                G_fine_resized,
+                G_fine_norm,
+                edge_map_from_syn
+            )
 
         return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_TSG, scaler
     

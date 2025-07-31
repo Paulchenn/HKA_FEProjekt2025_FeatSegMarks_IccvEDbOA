@@ -267,8 +267,8 @@ if __name__ == "__main__":
             # <<< TSD ===
 
             # === Show images depending on configuration ===
-            if config.SHOW_IMAGES and i % config.SHOW_IMAGES_INTERVAL == 0:
-                show_images(
+            if config.SHOW_IMG_EMSE_TSD and i % config.SHOW_IMAGES_INTERVAL == 0:
+                show_imgEmseTsd(
                     img,
                     deformedImg,
                     edgeMap
