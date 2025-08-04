@@ -18,16 +18,23 @@
   "path_tuned_D": "false./Result/20250729_131300/ImageNet256/tuned_D/Epoch_051.pth",
   "path_tuned_G": "false./Result/20250729_131300/ImageNet256/tuned_G/Epoch_051.pth",
   "path_optim_D": "false./Result/20250729_131300/ImageNet256/optim_D/Epoch_051.pth",
-  "path_optim_G": "false./Result/20250729_131300/ImageNet256/optim_G/Epoch_051.pth",
+  "path_optim_G_stage1": "false./Result/20250729_131300/ImageNet256/optim_G_stage1/Epoch_051.pth",
+  "path_optim_G_stage2": "false./Result/20250729_131300/ImageNet256/optim_G_stage2/Epoch_051.pth",
 
   "train_with_cls": true,
 
   "downSize": 36,
 
   "learning_rate": {
-    "generator": 0.0002,
-    "discriminator": 0.0001,
-    "classifier": 0.00001
+    "discriminator": 0.0002,
+    "generator_stage1": 0.0002,
+    "generator_stage2": 0.0001
+  },
+
+  "loss_weights": {
+    "lambda_l1": 0.5,
+    "lambda_cls": 1.0,
+    "lambda_edge": 5.0
   },
 
   "patience": 100,
