@@ -247,7 +247,6 @@ class TSG:
         cls,
         optimD,
         optimG,
-        optimC,
         CE_loss,
         L1_loss,
         time_TSG,
@@ -285,7 +284,6 @@ class TSG:
         scaler.scale(loss.stage1_D_loss).backward(retain_graph=True)
         scaler.step(optimD)
         scaler.update()
-        time_TSG.time_Scaler.append(time.time() - time_startScaler)
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
@@ -362,7 +360,7 @@ class TSG:
                 edge_map_from_syn
             )
 
-        return netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_TSG, scaler
+        return netD, netG, cls, optimD, optimG, CE_loss, L1_loss, loss, time_TSG, scaler
     
     def doTSG_testing(
         self,
