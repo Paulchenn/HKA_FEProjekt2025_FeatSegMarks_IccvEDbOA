@@ -1,19 +1,35 @@
-import pdb
-import os
 import csv
-from datetime import datetime
+import os
+import pdb
+import sys
 import time
 import torch
-from torch import nn, optim
 
-from torchvision import transforms
-#from utils.get_ImageNet import main as get_ImageNet
+import torchvision.models as torch_models
+
+from collections import deque
+from datetime import datetime
 from models import generation
-from models.resnet import ResNet18, BasicBlock
-import torchvision.models as models
+from torch import nn, optim
+from torchvision import transforms
+from torchvision.models import ResNet18_Weights
 from utils.modules  import *
 from utils.helpers import *
-from collections import deque
+
+
+class Tee(object):
+    def __init__(self, *files):
+        self.files = files
+
+    def write(self, obj):
+        for f in self.files:
+            f.write(obj)
+            f.flush()  # wichtig für Echtzeit-Ausgabe
+
+    def flush(self):
+        for f in self.files:
+            f.flush()
+
 
 def create_saveFolder(save_path):
     """
@@ -31,14 +47,32 @@ CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
 # === Load parameters for training from config.json ===
 config = get_config(os.path.join(SCRIPT_DIR, 'config/config.json'))
 
+# create log-directory (if not yet done)
+folder2save_log = os.path.join(config.SAVE_PATH)
+create_saveFolder(folder2save_log)  # Create folder to save log
+path2save_log = os.path.join(folder2save_log, f'log.txt')  # Path to save the log
+
+# Log-Datei öffnen und stdout + stderr umleiten
+log_file = open(path2save_log, "w")
+sys.stdout = Tee(sys.__stdout__, log_file)
+sys.stderr = Tee(sys.__stderr__, log_file)
+
 # Clear GPU Memory
 if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
 if __name__ == "__main__":
-    print("Version: V1.1")
     # # start debugging
     # pdb.set_trace()
+
+    print("=================================================")
+    print(f"===== TRAINING STARTET {datetime.now().strftime('%d.%m.%Y, %H-%M-%S')} =====")
+    print("=================================================")
+
+    if config.DEBUG_MODE:
+        print("*************************")
+        print("!!!!! DEBUG MODE ON !!!!!")
+        print("*************************")
 
     torch.autograd.set_detect_anomaly(True)
 
@@ -90,7 +124,7 @@ if __name__ == "__main__":
     # === Initialize networks (and move to CPU/GPU) ===
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
-    cls     = models.resnet18(pretrained=True)
+    cls     = torch_models.resnet18(weights=ResNet18_Weights.DEFAULT)
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
     cls     = cls.to(config.DEVICE)
     
@@ -109,7 +143,7 @@ if __name__ == "__main__":
                 print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape})")
         model_dict.update(filtered_dict)
         netG.load_state_dict(model_dict)
-        print(f"Loaded Generator checkpoint from {config.PATH_TUNED_G}")
+        print(f"Loaded Generator-Net checkpoint from {config.PATH_TUNED_G}")
 
     if os.path.exists(config.PATH_TUNED_D):
         checkpoint = torch.load(config.PATH_TUNED_D, map_location=config.DEVICE)
@@ -125,23 +159,7 @@ if __name__ == "__main__":
                 print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
         model_dict.update(filtered_dict)
         netD.load_state_dict(model_dict)
-        print(f"Loaded Discriminator checkpoint from {config.PATH_TUNED_D}")
-
-    if os.path.exists(config.PATH_BEST_CLS):
-        checkpoint = torch.load(config.PATH_BEST_CLS, map_location=config.DEVICE)
-        model_dict = cls.state_dict()
-        filtered_dict = {
-            k: v for k, v in checkpoint.items()
-            if k in model_dict and v.shape == model_dict[k].shape
-        }
-        skipped = [k for k in checkpoint if k not in filtered_dict]
-        if skipped:
-            print(f"Not loaded Layer (due to conflicts in name and dimension):")
-            for k in skipped:
-                print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
-        model_dict.update(filtered_dict)
-        cls.load_state_dict(model_dict)
-        print(f"Loaded Classifier checkpoint from {config.PATH_CLS}")
+        print(f"Loaded Discriminator-Net checkpoint from {config.PATH_TUNED_D}")
 
     # === Initialize optimizers ===
     optimG = optim.Adam(netG.parameters(), lr=config.LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
@@ -150,12 +168,11 @@ if __name__ == "__main__":
 
     if os.path.exists(config.PATH_OPTIM_G):
         optimG.load_state_dict(torch.load(config.PATH_OPTIM_G))
+        print(f"Loaded Generator-Optimizer checkpoint from {config.PATH_TUNED_G}")
 
     if os.path.exists(config.PATH_OPTIM_D):
         optimD.load_state_dict(torch.load(config.PATH_OPTIM_D))
-
-    if os.path.exists(config.PATH_OPTIM_CLS):
-        optimC.load_state_dict(torch.load(config.PATH_OPTIM_CLS))
+        print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_TUNED_D}")
 
     # === Initialize loss functions === 
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
@@ -173,6 +190,8 @@ if __name__ == "__main__":
         img     = img.to(config.DEVICE)
         label   = label.to(config.DEVICE)
 
+        IMG = img
+
         # Reset gradients
         netD.zero_grad()
         netG.zero_grad()
@@ -188,16 +207,16 @@ if __name__ == "__main__":
 
         # === Show images depending on configuration ===
         show_result(  # Shows the result of actual epoch
-            config,
-            -1,  # -1 means no epoch number
-            img=img,
+            config=config,
+            num_epoch=-1,
+            img=IMG,
             edgeMap=EDGE_MAP_TEST,
-            deformedImg=DEFORMED_IMG_TEST,
+            deformedMap=DEFORMED_IMG_TEST,
             path=path2save_epochImg,
             print_original=True,
-            show=False,
-            save=True,
             netG=netG,
+            show=False,
+            save=True
         )
 
         break
@@ -213,10 +232,14 @@ if __name__ == "__main__":
     csv_output_path = os.path.join(csv_output_dir, "SDbOA_metrics.csv")
     
     
-   
     ##### ===== TRAINING ===== #####
     for epoch in range(config.EPOCHS):
-        print(epoch)
+        print("")
+        print("")
+        print("===================================")
+        print(f"=== Training at Epoch {epoch+1:0{num_digits}d} / {config.EPOCHS} ===")
+        print("===================================")
+        
 
         # === Training Phase ===
         netG.train()
@@ -278,7 +301,7 @@ if __name__ == "__main__":
             time_startTSG = time.time()
             netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = tsg.doTSG_training(
                 i, config, emse, img, label, edgeMap, deformedImg, netD, netG, cls,
-                optimD, optimG, optimC, CE_loss, L1_loss, time_TSG, scaler
+                optimD, optimG, optimC, CE_loss, L1_loss, time_TSG, scaler, downSize=config.DOWN_SIZE
             )
             time_TSG.time_tot.append(time.time() - time_startTSG)
             # <<< TSG ===
@@ -287,10 +310,9 @@ if __name__ == "__main__":
 
             # Calculate times
             if i==itersForAverageCalc-1:
-                print("----------")
                 print(f"Time taken for {i+1} iterations: {round(sum(time_Iteration), 4)} s")
                 print("Epoch will roughly take: ", round(sum(time_Iteration)/itersForAverageCalc * len(train_loader) / 60, 4), " min")
-                print('-----')
+                print('----------')
                 print(f"Average times after {i+1} iterations:")
                 print("     Iteration:      ", round(sum(time_Iteration)/(i+1), 4), " s")
                 print("     EMSE:           ", round(sum(time_EMSE)/(i+1), 4), " s")
@@ -302,11 +324,10 @@ if __name__ == "__main__":
                 print("     TSG (trainG2):  ", round(sum(time_TSG.time_trainG2)/(i+1), 4), " s")
                 print("----------")
             elif (i+1) % config.LOG_INTERVAL == 0 and (i+1) > itersForAverageCalc:
-                print("----------")
                 print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
                 print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
                 print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
-                if config.TRAIN_CLS:
+                if config.TRAIN_WITH_CLS:
                     print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
                     print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
                 else:
@@ -321,14 +342,15 @@ if __name__ == "__main__":
         path2save_epochImg = os.path.join(folder2save_epochImg, f'Epoch_{epoch+1:0{num_digits}d}.png')  # Path to save the results
         try:
             show_result(  # Shows the result of actual epoch
-                config,
-                epoch,
+                config=config,
+                num_epoch=epoch,
+                img=IMG,
                 edgeMap=EDGE_MAP_TEST,
-                deformedImg=DEFORMED_IMG_TEST,
-                path=path2save_epochImg,
+                deformedMap=DEFORMED_IMG_TEST,
                 netG=netG,
                 show=False,
-                save=True
+                save=True,
+                path=path2save_epochImg
             )
         except IndexError as e:
             print(f"IndexError: {e}")
@@ -378,8 +400,10 @@ if __name__ == "__main__":
 
         # Only validate every N epochs
         if epoch % 1 == 0:
-            print("----------")
-            print(f"Validating at Epoch {epoch + 1} / {config.EPOCHS}:")
+            print("")
+            print("=====================================")
+            print(f"=== Validating at Epoch {epoch+1:0{num_digits}d} / {config.EPOCHS} ===")
+            print("=====================================")
             with torch.no_grad():
                 for i, (img, label) in enumerate(val_loader):
                     # For Debugging
@@ -412,7 +436,8 @@ if __name__ == "__main__":
                         netG=netG,
                         cls=cls,
                         CE_loss=CE_loss,
-                        L1_loss=L1_loss
+                        L1_loss=L1_loss,
+                        downSize=config.DOWN_SIZE
                     )
                     # <<< Generation and Classification ===
 
@@ -429,43 +454,19 @@ if __name__ == "__main__":
                 config.acc_history.append(acc)
 
                 # Print results
-                print("----------")
-                print(f"Epoch[{epoch + 1} / {config.EPOCHS}] LOSS:")
-                print(f"    accuracy: correct/total = {correct}/{total} = {acc}")
-                print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
-                print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
-                if config.TRAIN_CLS:
-                    print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
-                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
+                print(f"accuracy: correct/total = {correct}/{total} = {acc}")
+                print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
+                print(f"Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
+                if config.TRAIN_WITH_CLS:
+                    print(f"Classifier loss: {loss.cls_loss.item():.4f}")
+                    print(f"Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
                 else:
-                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {loss.stage2_G_loss.item():.4f}")
-                print("----------")
-
-
-                if acc > best_acc:
-                    best_acc = acc
-                    print('    Improvement, best accuracy: ', acc)
-                    # === Save best Classifier and its Optimizer >>>
-                    if config.train_cls:
-                        # Save the best classifier model
-                        folder2save_bestCls = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'best_cls')
-                        create_saveFolder(folder2save_bestCls)  # Create folder to save best classifier
-                        path2save_bestCls = os.path.join(folder2save_bestCls, 'best_cls.pth')  # Path to save the results
-                        torch.save(cls.state_dict(), path2save_bestCls)
-
-                        # Save the best classifier optimizer
-                        folder2save_bestOptimCls = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_cls')
-                        create_saveFolder(folder2save_bestOptimCls)  # Create folder to save best classifier optimizer
-                        path2save_bestOptimCls = os.path.join(folder2save_bestOptimCls, 'best_optim_cls.pth')  # Path to save the results
-                        torch.save(optimC.state_dict(), path2save_bestOptimCls)
-                    # <<< Save best Classifier and its Optimizer ===
-                else:
-                    print('    No improvement, best accuracy: ', best_acc)
+                    print(f"Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {loss.stage2_G_loss.item():.4f}")
                 
                 val_end_time = time.time()
                 val_duration = val_end_time - val_start_time
                 fps = float(total.cpu()) / val_duration
-                print(f"    Validation Inference Speed: {fps:.2f} FPS")
+                print(f"Validation Inference Speed: {fps:.2f} FPS")
 
                 # === Speichere Metriken dieser Epoche ===
                 epoch_metric = {
@@ -486,9 +487,9 @@ if __name__ == "__main__":
                 # Early stopping
                 if len(config.acc_history) >= config.PATIENCE:
                     slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
-                    print(f"    Slope of accuracy trend: {slope:.6f}")
+                    print(f"Slope of accuracy trend: {slope:.6f}")
                     if slope < config.MIN_SLOPE:
-                        print(f"    Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
+                        print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
                         break
 
                 # === Schreibe alle Metriken als CSV-Datei ===
@@ -498,4 +499,9 @@ if __name__ == "__main__":
                     writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
                     writer.writeheader()
                     writer.writerows(epoch_metrics)
-            print("----------")
+
+    print("")
+    print("")
+    print("===============================================")
+    print(f"===== TRAINING ENDED {datetime.now().strftime('%d.%m.%Y, %H-%M-%S')} =====")
+    print("===============================================")
