@@ -19,6 +19,37 @@ from PIL import Image
 #def preperations():
 
 
+def blur_image(
+    img,
+    downSize=12
+):
+    # blur image by downsampling and interpolation / upsampling
+
+    # original image height and width
+    height, width = img.shape[2], img.shape[3]
+    if height < width:
+        print("Denoising: Input Height smaler than input width!")
+        print("Denoising: Taking smaler input height.")
+        upSize = height
+    elif width < height:
+        print("Denoising: Input Height bigger than input width!")
+        print("Denoising: Taking smaler input width.")
+        upSize = width
+    else:
+        upSize = height
+
+
+    # downsampling
+    downsampler = transforms.Resize((downSize, downSize))
+    downsampled = downsampler(img)
+
+    # upsampling
+    upsampler   = transforms.Resize((upSize, upSize))
+    upsampled   = upsampler(downsampled)
+
+    return upsampled
+
+
 def get_config(file_path):
     """
     Reads a configuration file and returns the configuration as a dictionary.
@@ -39,10 +70,8 @@ def get_config(file_path):
 
     config["PATH_TUNED_D"] = config["path_tuned_D"]
     config["PATH_TUNED_G"] = config["path_tuned_G"]
-    config["PATH_BEST_CLS"] = config["path_best_cls"]
     config["PATH_OPTIM_D"] = config["path_optim_D"]
     config["PATH_OPTIM_G"] = config["path_optim_G"]
-    config["PATH_OPTIM_CLS"] = config["path_optim_CLS"]
 
     config["IMG_SIZE"] = config["image_size"]
     config["GEN_IN_DIM"] = config["generator_input_dim"]
@@ -57,7 +86,9 @@ def get_config(file_path):
 
     config["LOG_INTERVAL"] = config["log_interval"]
 
-    config["TRAIN_CLS"] = config["train_cls"]
+    config["TRAIN_WITH_CLS"] = config["train_with_cls"]
+
+    config["DOWN_SIZE"] = config["downSize"]
 
     config["DEBUG_MODE"] = config["debug_mode"]
     config["DEBUG_ITERS_START"] = config["debugIterations_strt"]
@@ -339,7 +370,7 @@ def show_result(
         num_epoch,
         img=None,
         edgeMap=None,
-        deformedImg=None,
+        deformedMap=None,
         path='Result/result.png',
         print_original=False,
         show=False,
@@ -352,7 +383,8 @@ def show_result(
     if not print_original:
         zz = torch.randn(mn_batch, 100, 1, 1).to(config.DEVICE)
         netG.eval()
-        test_images = netG(zz, edgeMap, deformedImg)
+        img_blur = blur_image(img, 24)
+        test_images = netG(zz, deformedMap, img_blur)
         netG.train()
         myTitle = 'Generated Images'
     else:
