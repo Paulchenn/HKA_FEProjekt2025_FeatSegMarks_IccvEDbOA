@@ -13,6 +13,7 @@ from models import generation
 from torch import nn, optim
 from torchvision import transforms
 from torchvision.models import ResNet18_Weights
+from tqdm import tqdm
 from utils.modules  import *
 from utils.helpers import *
 
@@ -30,14 +31,6 @@ class Tee(object):
         for f in self.files:
             f.flush()
 
-
-def create_saveFolder(save_path):
-    """
-    Creates a save folder for the results if it does not exist.
-    """
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-        
 
 def create_saveFolder(save_path):
     """
@@ -69,10 +62,6 @@ sys.stderr = Tee(sys.__stderr__, log_file)
 if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
-# Clear GPU Memory
-if not config.DEVICE.type=="cpu":
-    torch.cuda.empty_cache()
-
 if __name__ == "__main__":
     # # start debugging
     # pdb.set_trace()
@@ -87,6 +76,7 @@ if __name__ == "__main__":
         print("*************************")
 
     torch.autograd.set_detect_anomaly(True)
+
 
     # === Initialize Trainiingclasses ===
     emse    = EMSE(config=config)    # Initialize EMSE class
@@ -109,6 +99,7 @@ if __name__ == "__main__":
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
+
 
     # === Load the dataset (ImageNet) ===
     cwd = os.getcwd()   # current working directory
@@ -133,6 +124,7 @@ if __name__ == "__main__":
     # Set best accuracy to 0 to be sure that first accuracy is better
     best_acc = 0
     
+
     # === Initialize networks (and move to CPU/GPU) ===
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
@@ -140,6 +132,7 @@ if __name__ == "__main__":
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
     cls     = cls.to(config.DEVICE)
     
+
     # === Load checkpoints
     if os.path.exists(config.PATH_TUNED_G):
         checkpoint = torch.load(config.PATH_TUNED_G, map_location=config.DEVICE)
@@ -173,26 +166,10 @@ if __name__ == "__main__":
         netD.load_state_dict(model_dict)
         print(f"Loaded Discriminator-Net checkpoint from {config.PATH_TUNED_D}")
 
-    if os.path.exists(config.PATH_BEST_CLS):
-        checkpoint = torch.load(config.PATH_BEST_CLS, map_location=config.DEVICE)
-        model_dict = cls.state_dict()
-        filtered_dict = {
-            k: v for k, v in checkpoint.items()
-            if k in model_dict and v.shape == model_dict[k].shape
-        }
-        skipped = [k for k in checkpoint if k not in filtered_dict]
-        if skipped:
-            print(f"Not loaded Layer (due to conflicts in name and dimension):")
-            for k in skipped:
-                print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
-        model_dict.update(filtered_dict)
-        cls.load_state_dict(model_dict)
-        print(f"Loaded Classifier checkpoint from {config.PATH_CLS}")
 
     # === Initialize optimizers ===
     optimG = optim.Adam(netG.parameters(), lr=config.LR_GEN, betas=(0., 0.99))     # Optimizer for Generator (GAN-typical Betas)
     optimD = optim.Adam(netD.parameters(), lr=config.LR_DISC, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimC = optim.Adam(cls.parameters(), lr=config.LR_CLS, betas=(0., 0.99))      # Optimizer for Classifier (GAN-typical Betas)
 
     if os.path.exists(config.PATH_OPTIM_G):
         optimG.load_state_dict(torch.load(config.PATH_OPTIM_G))
@@ -202,8 +179,6 @@ if __name__ == "__main__":
         optimD.load_state_dict(torch.load(config.PATH_OPTIM_D))
         print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_TUNED_D}")
 
-    if os.path.exists(config.PATH_OPTIM_CLS):
-        optimC.load_state_dict(torch.load(config.PATH_OPTIM_CLS))
 
     # === Initialize loss functions === 
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
@@ -216,6 +191,7 @@ if __name__ == "__main__":
     num_digits = len(str(config.EPOCHS))
     path2save_epochImg = os.path.join(folder2save_epochImg, f'originalImages.png')  # Path to save the results
     
+
     # === Create one batch of test data ===
     for i, (img, label) in enumerate(val_loader):
         img     = img.to(config.DEVICE)
@@ -262,8 +238,7 @@ if __name__ == "__main__":
     # Pfad zur CSV-Datei
     csv_output_path = os.path.join(csv_output_dir, "SDbOA_metrics.csv")
     
-    
-    
+
    
     ##### ===== TRAINING ===== #####
     for epoch in range(config.EPOCHS):
@@ -285,8 +260,6 @@ if __name__ == "__main__":
                 param_group['lr'] = config.LR_GEN / 10
             for param_group in optimD.param_groups:
                 param_group['lr'] = config.LR_DISC / 10
-            for param_group in optimC.param_groups:
-                param_group['lr'] = config.LR_CLS / 10
 
         # Initialize GradScaler for mixed precision training
         scaler = torch.amp.GradScaler()
@@ -300,7 +273,8 @@ if __name__ == "__main__":
         time_TSG.time_trainG2 = []
         time_TSG.time_tot = []
         itersForAverageCalc = 10
-        for i, (img, label) in enumerate(train_loader):
+        pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True, file=sys.__stderr__, ncols=100)
+        for i, (img, label) in pbar:
             time_startIteration = time.time()
 
             # For Debugging
@@ -332,40 +306,51 @@ if __name__ == "__main__":
 
             # === TSG >>>
             time_startTSG = time.time()
-            netD, netG, cls, optimD, optimG, optimC, CE_loss, L1_loss, loss, time_, scaler = tsg.doTSG_training(
+            netD, netG, cls, optimD, optimG, CE_loss, L1_loss, loss, time_, scaler = tsg.doTSG_training(
                 i, config, emse, img, label, edgeMap, deformedImg, netD, netG, cls,
-                optimD, optimG, optimC, CE_loss, L1_loss, time_TSG, scaler, downSize=config.DOWN_SIZE
+                optimD, optimG, CE_loss, L1_loss, time_TSG, scaler, downSize=config.DOWN_SIZE
             )
             time_TSG.time_tot.append(time.time() - time_startTSG)
             # <<< TSG ===
 
             time_Iteration.append(time.time() - time_startIteration)
 
-            # Calculate times
-            if i==itersForAverageCalc-1:
-                print(f"Time taken for {i+1} iterations: {round(sum(time_Iteration), 4)} s")
-                print("Epoch will roughly take: ", round(sum(time_Iteration)/itersForAverageCalc * len(train_loader) / 60, 4), " min")
-                print('----------')
-                print(f"Average times after {i+1} iterations:")
-                print("     Iteration:      ", round(sum(time_Iteration)/(i+1), 4), " s")
-                print("     EMSE:           ", round(sum(time_EMSE)/(i+1), 4), " s")
-                print("     TSD:            ", round(sum(time_TSD)/(i+1), 4), " s")
-                print("     TSG (total):    ", round(sum(time_TSG.time_tot)/(i+1), 4), " s")
-                print("     TSG (trainD):   ", round(sum(time_TSG.time_trainD)/(i+1), 4), " s")
-                print("     TSG (trainG1):  ", round(sum(time_TSG.time_trainG1)/(i+1), 4), " s")
-                print("     TSG (trainCls): ", round(sum(time_TSG.time_trainCls)/(i+1), 4), " s")
-                print("     TSG (trainG2):  ", round(sum(time_TSG.time_trainG2)/(i+1), 4), " s")
-                print("----------")
-            elif (i+1) % config.LOG_INTERVAL == 0 and (i+1) > itersForAverageCalc:
-                print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
-                print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
-                print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
-                if config.TRAIN_WITH_CLS:
-                    print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
-                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
-                else:
-                    print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {loss.stage2_G_loss.item():.4f}")
-                print("----------")
+            # # Calculate times
+            # if i==itersForAverageCalc-1:
+            #     print(f"Time taken for {i+1} iterations: {round(sum(time_Iteration), 4)} s")
+            #     print("Epoch will roughly take: ", round(sum(time_Iteration)/itersForAverageCalc * len(train_loader) / 60, 4), " min")
+            #     print('----------')
+            #     print(f"Average times after {i+1} iterations:")
+            #     print("     Iteration:      ", round(sum(time_Iteration)/(i+1), 4), " s")
+            #     print("     EMSE:           ", round(sum(time_EMSE)/(i+1), 4), " s")
+            #     print("     TSD:            ", round(sum(time_TSD)/(i+1), 4), " s")
+            #     print("     TSG (total):    ", round(sum(time_TSG.time_tot)/(i+1), 4), " s")
+            #     print("     TSG (trainD):   ", round(sum(time_TSG.time_trainD)/(i+1), 4), " s")
+            #     print("     TSG (trainG1):  ", round(sum(time_TSG.time_trainG1)/(i+1), 4), " s")
+            #     print("     TSG (trainCls): ", round(sum(time_TSG.time_trainCls)/(i+1), 4), " s")
+            #     print("     TSG (trainG2):  ", round(sum(time_TSG.time_trainG2)/(i+1), 4), " s")
+            #     print("----------")
+            # elif (i+1) % config.LOG_INTERVAL == 0 and (i+1) > itersForAverageCalc:
+            #     print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
+            #     print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
+            #     print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
+            #     if config.TRAIN_WITH_CLS:
+            #         print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
+            #         print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
+            #     else:
+            #         print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {loss.stage2_G_loss.item():.4f}")
+            #     print("----------")
+
+            pbar.set_postfix({
+                "Iter": f"{time_Iteration[-1]:.2f}s",
+                "EMSE": f"{time_EMSE[-1]:.2f}s",
+                "TSD": f"{time_TSD[-1]:.2f}s",
+                "TSG": f"{time_TSG.time_tot[-1]:.2f}s",
+                "D": f"{loss.stage1_D_loss.item():.2f}",
+                "G1": f"{loss.stage1_G_loss.item():.2f}",
+                "G2": f"{loss.stage2_G_loss.item():.2f}",
+                **({"Cls": f"{loss.cls_loss.item():.2f}"} if config.TRAIN_WITH_CLS else {})
+            })
 
             # For debugging: Stop after a certain number of iterations
             if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START + config.DEBUG_ITERS_AMOUNT:
@@ -438,7 +423,7 @@ if __name__ == "__main__":
             print(f"=== Validating at Epoch {epoch+1:0{num_digits}d} / {config.EPOCHS} ===")
             print("=====================================")
             with torch.no_grad():
-                for i, (img, label) in enumerate(val_loader):
+                for i, (img, label) in enumerate(tqdm(val_loader, desc="Validating", file=sys.__stderr__, ncols=100)):
                     # For Debugging
                     if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
                         continue
