@@ -207,37 +207,6 @@ class TSG:
 
     def myNormalize(self):
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-
-    def blur_image(
-        self,
-        img,
-        downSize=12
-    ):
-        # blur image by downsampling and interpolation / upsampling
-
-        # original image height and width
-        height, width = img.shape[2], img.shape[3]
-        if height < width:
-            print("Denoising: Input Height smaler than input width!")
-            print("Denoising: Taking smaler input height.")
-            upSize = height
-        elif width < height:
-            print("Denoising: Input Height bigger than input width!")
-            print("Denoising: Taking smaler input width.")
-            upSize = width
-        else:
-            upSize = height
-
-
-        # downsampling
-        downsampler = transforms.Resize((downSize, downSize))
-        downsampled = downsampler(img)
-
-        # upsampling
-        upsampler   = transforms.Resize((upSize, upSize))
-        upsampled   = upsampler(downsampled)
-
-        return upsampled
     
     def generateImg(
         self,
@@ -295,7 +264,7 @@ class TSG:
         mn_batch = img.shape[0]
 
         # === Step 0: Precompute blurred texture map Itxt ===
-        img_blur = self.blur_image(img, downSize)  # corresponds to Itxt in the paper
+        img_blur = blur_image(img, downSize)  # corresponds to Itxt in the paper
 
         # === Step 1: Phase 1 – Rough Generation (Eextend + Itxt) ===
         time_startTrainD = time.time()
@@ -349,7 +318,7 @@ class TSG:
 
             # === Classifier Loss ===
             time_startTrainCls = time.time()
-            if config.TRAIN_CLS:
+            if config.TRAIN_WITH_CLS:
                 G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
                 if G_fine_resized.shape[1] == 1:
                     G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
@@ -416,7 +385,7 @@ class TSG:
         mn_batch = img.shape[0]
 
         # === Step 0: Precompute blurred texture map Itxt ===
-        img_blur = self.blur_image(img, downSize)  # corresponds to Itxt in the paper
+        img_blur = blur_image(img, downSize)  # corresponds to Itxt in the paper
 
         # === Step 1: Phase 1 – Rough Generation (Eextend + Itxt) ===
         # Generate rough image (Stage 1)
