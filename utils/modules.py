@@ -246,7 +246,8 @@ class TSG:
         netG,
         cls,
         optimD,
-        optimG,
+        optimG_stage1,
+        optimG_stage2,
         CE_loss,
         L1_loss,
         time_TSG,
@@ -276,7 +277,7 @@ class TSG:
             D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
             D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
             D_celoss = CE_loss(aux_output_realImg, label)
-            loss.stage1_D_loss = (-D_result_realImg + D_result_roughImg) + 0.5 * D_celoss
+            loss.stage1_D_loss = (-D_result_realImg.mean() + D_result_roughImg) + 0.5 * D_celoss
 
         # === Train Discriminator (Stage 1) ===
         netD.zero_grad()
@@ -296,12 +297,18 @@ class TSG:
             G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
             G_celoss_rough = CE_loss(aux_output_roughImg.detach(), label).mean()
             # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
-            loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
+            lambda_L1 = config.LAMBDA_L1 # original: 1.0
+            lambda_cls = config.LAMBDA_CLS # original: 0.5
+            loss.stage1_G_loss = (
+                lambda_L1 * G_L1_loss_rough
+                - D_result_roughImg.detach()
+                + lambda_cls * G_celoss_rough
+            )
 
         netG.zero_grad()
-        optimG.zero_grad()
+        optimG_stage1.zero_grad()
         scaler.scale(loss.stage1_G_loss).backward()
-        scaler.step(optimG)
+        scaler.step(optimG_stage1)
         scaler.update()
         
         # get time needed for generator training in stage 1
@@ -337,12 +344,21 @@ class TSG:
             G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
             G_celoss_fine = CE_loss(aux_output_fineImg.detach(), label).sum()
             # Total loss = GAN + Classification + Shape-Preservation
-            loss.stage2_G_loss = G_L1_loss_fine - D_result_fineImg.detach() + G_celoss_fine + edge_loss + loss.cls_loss
+            lambda_L1 = config.LAMBDA_L1 # original: 1.0
+            lambda_cls = config.LAMBDA_CLS # original: 1.0
+            lambda_edge = config.LAMBDA_EDGE # original: 1.0
+            loss.stage2_G_loss = (
+                lambda_L1 * G_L1_loss_fine
+                - D_result_fineImg.detach()
+                + lambda_cls * G_celoss_fine
+                + lambda_edge * edge_loss
+                + lambda_cls * loss.cls_loss
+            )
 
         netG.zero_grad()
-        optimG.zero_grad()
+        optimG_stage2.zero_grad()
         scaler.scale(loss.stage2_G_loss).backward()
-        scaler.step(optimG)
+        scaler.step(optimG_stage2)
         scaler.update()
         
         time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
@@ -351,6 +367,8 @@ class TSG:
             #pdb.set_trace()
             show_tsg(
                 img,
+                e_extend,
+                e_deformed,
                 img_blur,
                 img_for_loss,
                 G_rough,
@@ -360,7 +378,7 @@ class TSG:
                 edge_map_from_syn
             )
 
-        return netD, netG, cls, optimD, optimG, CE_loss, L1_loss, loss, time_TSG, scaler
+        return netD, netG, cls, optimD, optimG_stage1, optimG_stage2, CE_loss, L1_loss, loss, time_TSG, scaler
     
     def doTSG_testing(
         self,
@@ -405,7 +423,13 @@ class TSG:
         G_celoss_rough = CE_loss(aux_output_roughImg.detach(), label).sum()
 
         # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
-        loss.stage1_G_loss = G_L1_loss_rough - D_result_roughImg.detach() + 0.5 * G_celoss_rough
+        lambda_L1 = config.LAMBDA_L1 # original: 1.0
+        lambda_cls = config.LAMBDA_CLS # original: 0.5
+        loss.stage1_G_loss = (
+            lambda_L1 * G_L1_loss_rough
+            - D_result_roughImg.detach()
+            + lambda_cls * G_celoss_rough
+        )
 
         # === Step 2: Phase 2 – Fine Tuning (Edeform + Itxt) ===
 
@@ -433,6 +457,15 @@ class TSG:
         G_celoss_fine = CE_loss(aux_output_fineImg.detach(), label).sum()
 
         # Total loss = GAN + Classification + Shape-Preservation
-        loss.stage2_G_loss = G_L1_loss_fine - D_result_fineImg.detach() + G_celoss_fine + edge_loss + loss.cls_loss
+        lambda_L1 = config.LAMBDA_L1 # original: 1.0
+        lambda_cls = config.LAMBDA_CLS # original: 1.0
+        lambda_edge = config.LAMBDA_EDGE # original: 1.0
+        loss.stage2_G_loss = (
+            lambda_L1 * G_L1_loss_fine
+            - D_result_fineImg.detach()
+            + lambda_cls * G_celoss_fine
+            + lambda_edge * edge_loss
+            + lambda_cls * loss.cls_loss
+        )
 
         return loss, cls_prediction
