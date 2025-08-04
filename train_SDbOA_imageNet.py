@@ -74,7 +74,6 @@ if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
 if __name__ == "__main__":
-    print("Version: V1.1")
     # # start debugging
     # pdb.set_trace()
 
@@ -500,7 +499,7 @@ if __name__ == "__main__":
                 val_end_time = time.time()
                 val_duration = val_end_time - val_start_time
                 fps = float(total.cpu()) / val_duration
-                print(f"    Validation Inference Speed: {fps:.2f} FPS")
+                print(f"Validation Inference Speed: {fps:.2f} FPS")
 
                 # === Speichere Metriken dieser Epoche ===
                 epoch_metric = {
@@ -521,9 +520,9 @@ if __name__ == "__main__":
                 # Early stopping
                 if len(config.acc_history) >= config.PATIENCE:
                     slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
-                    print(f"    Slope of accuracy trend: {slope:.6f}")
+                    print(f"Slope of accuracy trend: {slope:.6f}")
                     if slope < config.MIN_SLOPE:
-                        print(f"    Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
+                        print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
                         break
 
                 # === Schreibe alle Metriken als CSV-Datei ===
