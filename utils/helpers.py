@@ -76,13 +76,6 @@ def get_config(file_path):
     config["PATH_OPTIM_D"] = config["path_optim_D"]
     config["PATH_OPTIM_G"] = config["path_optim_G"]
 
-    config["PATH_TUNED_D"] = config["path_tuned_D"]
-    config["PATH_TUNED_G"] = config["path_tuned_G"]
-    config["PATH_BEST_CLS"] = config["path_best_cls"]
-    config["PATH_OPTIM_D"] = config["path_optim_D"]
-    config["PATH_OPTIM_G"] = config["path_optim_G"]
-    config["PATH_OPTIM_CLS"] = config["path_optim_CLS"]
-
     config["IMG_SIZE"] = config["image_size"]
     config["GEN_IN_DIM"] = config["generator_input_dim"]
 
