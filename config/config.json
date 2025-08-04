@@ -14,7 +14,6 @@
   "device": "cuda",
   "batch_size": 10,
   "epochs": 500,
-  "num_workers": "!!! WILL BE CALCULATED !!!",
 
   "path_tuned_D": "false./Result/20250729_131300/ImageNet256/tuned_D/Epoch_051.pth",
   "path_tuned_G": "false./Result/20250729_131300/ImageNet256/tuned_G/Epoch_051.pth",
@@ -24,8 +23,6 @@
   "train_with_cls": true,
 
   "downSize": 36,
-
-  "train_cls": true,
 
   "learning_rate": {
     "generator": 0.0002,
