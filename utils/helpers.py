@@ -74,7 +74,8 @@ def get_config(file_path):
     config["PATH_TUNED_D"] = config["path_tuned_D"]
     config["PATH_TUNED_G"] = config["path_tuned_G"]
     config["PATH_OPTIM_D"] = config["path_optim_D"]
-    config["PATH_OPTIM_G"] = config["path_optim_G"]
+    config["PATH_OPTIM_G_S1"] = config["path_optim_G_stage1"]
+    config["PATH_OPTIM_G_S2"] = config["path_optim_G_stage2"]
 
     config["IMG_SIZE"] = config["image_size"]
     config["GEN_IN_DIM"] = config["generator_input_dim"]
@@ -96,9 +97,13 @@ def get_config(file_path):
     config["DEBUG_MODE"] = config["debug_mode"]
     config["DEBUG_ITERS_START"] = config["debugIterations_strt"]
     config["DEBUG_ITERS_AMOUNT"] = config["debugIterations_amount"]
-    config["LR_GEN"] = config["learning_rate"]["generator"]
     config["LR_DISC"] = config["learning_rate"]["discriminator"]
-    config["LR_CLS"] = config["learning_rate"]["classifier"]
+    config["LR_GEN_S1"] = config["learning_rate"]["generator_stage1"]
+    config["LR_GEN_S2"] = config["learning_rate"]["generator_stage2"]
+
+    config["LAMBDA_L1"] = config["loss_weights"]["lambda_l1"]
+    config["LAMBDA_CLS"] = config["loss_weights"]["lambda_cls"]
+    config["LAMBDA_EDGE"] = config["loss_weights"]["lambda_edge"]
 
     config["DATASET_NAME"] = config["dataset"]["name"]
     config["DATASET_PATH"] = config["dataset"]["path"]
@@ -299,6 +304,8 @@ def show_imgEmseTsd(
 
 def show_tsg(
     img,
+    e_extend,
+    e_deformed,
     img_blur,
     img_for_loss,
     G_rough,
@@ -310,6 +317,8 @@ def show_tsg(
     """
     Show the original image, deformed image, and edge map.
     :param img:
+    :param e_extend:
+    :param e_deformed:
     :param img_blur:
     :param img_for_loss:
     :param G_rough:
@@ -320,47 +329,67 @@ def show_tsg(
     """
     
     # === Show the original and deformed image ===
-    plt.figure(figsize=(10, 5))  # Adjusted figure size
-    plt.subplot(2, 4, 1)
+    plt.figure(figsize=(14, 14))  # Adjusted figure size
+    plt.subplot(3, 4, 1)
     plt.axis('off')
     plt.title('original image')
     plt.imshow(np.clip(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
-    plt.subplot(2, 4, 2)
+    plt.subplot(3, 4, 2)
+    plt.axis('off')
+    plt.title('edge map')
+    plt.imshow(np.clip(e_extend[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(3, 4, 3)
+    plt.axis('off')
+    plt.title('deformed edge map')
+    plt.imshow(np.clip(e_deformed[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(3, 4, 4)
     plt.axis('off')
     plt.title('blured image')
     plt.imshow(np.clip(img_blur[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
-    plt.subplot(2, 4, 3)
+    plt.subplot(3, 4, 5)
     plt.axis('off')
     plt.title('image for loss')
     plt.imshow(np.clip(img_for_loss[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
-    plt.subplot(2, 4, 4)
+    plt.subplot(3, 4, 6)
     plt.axis('off')
     plt.title('gen img s1')
     plt.imshow(np.clip(G_rough[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
-    plt.subplot(2, 4, 5)
+    plt.subplot(3, 4, 7)
     plt.axis('off')
     plt.title('gen img s2')
     G_fine_f32 = G_fine.float()
     plt.imshow(np.clip(G_fine_f32[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
-    plt.subplot(2, 4, 6)
+    plt.subplot(3, 4, 8)
     plt.axis('off')
     plt.title('resized img s2')
     plt.imshow(np.clip(G_fine_resized[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
-    plt.subplot(2, 4, 7)
+    plt.subplot(3, 4, 9)
     plt.axis('off')
     plt.title('norm res img s2')
     plt.imshow(np.clip(G_fine_norm[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
-    plt.subplot(2, 4, 8)
+    plt.subplot(3, 4, 10)
     plt.axis('off')
-    plt.title('edge map gem img s2')
+    plt.title('edge map gen img s2')
     plt.imshow(np.clip(edge_map_from_syn[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(3, 4, 11)
+    plt.axis('off')
+    plt.title('def edge map gr-ch')
+    plt.imshow(np.clip(e_deformed[0, 0:1, :, :].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+
+    plt.subplot(3, 4, 12)
+    plt.axis('off')
+    plt.title('edge map gen img s2 gr-ch')
+    plt.imshow(np.clip(edge_map_from_syn[0, 0:1, :, :].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
 
     #pdb.set_trace()
     plt.show(block=False)
