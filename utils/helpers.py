@@ -4,6 +4,7 @@ import torch
 import time
 import itertools
 import pdb
+import pytz
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -73,7 +74,8 @@ def get_config(file_path):
 
     config["PATH_TUNED_D"] = config["path_tuned_D"]
     config["PATH_TUNED_G"] = config["path_tuned_G"]
-    config["PATH_OPTIM_D"] = config["path_optim_D"]
+    config["PATH_OPTIM_D_S1"] = config["path_optim_D_stage1"]
+    config["PATH_OPTIM_D_S2"] = config["path_optim_D_stage2"]
     config["PATH_OPTIM_G_S1"] = config["path_optim_G_stage1"]
     config["PATH_OPTIM_G_S2"] = config["path_optim_G_stage2"]
 
@@ -81,8 +83,6 @@ def get_config(file_path):
     config["GEN_IN_DIM"] = config["generator_input_dim"]
 
     config["PATIENCE"] = config["patience"]
-    config["acc_history"] = deque(maxlen=config["patience"])
-    config["MIN_SLOPE"] = config["min_slope"]
 
     config["SHOW_IMG_EMSE_TSD"] = config["show_imgEmseTsd"]
     config["SHOW_TSG"] = config["show_tsg"]
@@ -97,21 +97,30 @@ def get_config(file_path):
     config["DEBUG_MODE"] = config["debug_mode"]
     config["DEBUG_ITERS_START"] = config["debugIterations_strt"]
     config["DEBUG_ITERS_AMOUNT"] = config["debugIterations_amount"]
-    config["LR_DISC"] = config["learning_rate"]["discriminator"]
-    config["LR_GEN_S1"] = config["learning_rate"]["generator_stage1"]
-    config["LR_GEN_S2"] = config["learning_rate"]["generator_stage2"]
 
-    config["LAMBDA_L1"] = config["loss_weights"]["lambda_l1"]
-    config["LAMBDA_CLS"] = config["loss_weights"]["lambda_cls"]
-    config["LAMBDA_EDGE"] = config["loss_weights"]["lambda_edge"]
+    config["LR_D_S1"] = config["learning_rate"]["discriminator_stage1"]
+    config["LR_D_S2"] = config["learning_rate"]["discriminator_stage2"]
+    config["LR_G_S1"] = config["learning_rate"]["generator_stage1"]
+    config["LR_G_S2"] = config["learning_rate"]["generator_stage2"]
+
+    config["LAMBDA_S1_L1"]      = config["loss_weights"]["lambda_stage1_l1"]
+    config["LAMBDA_S1_GAN"]     = config["loss_weights"]["lambda_stage1_GAN"]
+    config["LAMBDA_S1_CE"]      = config["loss_weights"]["lambda_stage1_CE"]
+    config["LAMBDA_S2_L1"]      = config["loss_weights"]["lambda_stage2_l1"]
+    config["LAMBDA_S2_GAN"]     = config["loss_weights"]["lambda_stage2_GAN"]
+    config["LAMBDA_S2_CE"]      = config["loss_weights"]["lambda_stage2_CE"]
+    config["LAMBDA_S2_CLS"]     = config["loss_weights"]["lambda_stage2_cls"]
+    config["LAMBDA_S2_EDGE"]    = config["loss_weights"]["lambda_stage2_edge"]
 
     config["DATASET_NAME"] = config["dataset"]["name"]
     config["DATASET_PATH"] = config["dataset"]["path"]
-    config["NUM_CLASSES"] = config["dataset"]["num_classes"]
     config["CLASS_NAMES"] = list(config["dataset"]["SELECTED_SYNSETS"].values())
     config["SELECTED_SYNSETS"] = config["dataset"]["SELECTED_SYNSETS"]
+    config["NUM_CLASSES"] = len(config["CLASS_NAMES"])
 
-    today_str = datetime.today().strftime('%Y%m%d_%H%M%S')
+    # Set timezone (z. B. Europe/Berlin)
+    tz = pytz.timezone('Europe/Berlin')
+    today_str = datetime.now(tz).strftime('%Y%m%d_%H%M%S')
     config["SAVE_PATH"] = os.path.join(config["save_path"], today_str)
 
     return SimpleNamespace(**config)
@@ -168,6 +177,7 @@ def get_tiny_imagenet_loaders(
     return train_loader, val_loader
 
 
+
 def get_train_val_loaders(
     config,
     data_dir,
@@ -188,16 +198,23 @@ def get_train_val_loaders(
     # Filter by selected class names (optional)
     class_names = set(config.CLASS_NAMES)
     if class_names is not None:
-        # Map class name to index
         class_to_idx = base_dataset.class_to_idx
         selected_idx = [class_to_idx[name] for name in class_names if name in class_to_idx]
 
         # Filter samples
         filtered_samples = [s for s in base_dataset.samples if s[1] in selected_idx]
 
-        # Create new dataset with filtered samples
-        base_dataset.samples = filtered_samples
-        base_dataset.targets = [s[1] for s in filtered_samples]
+        # Remap class indices to 0-based
+        idx_to_keep = sorted(set(s[1] for s in filtered_samples))
+        idx_remap = {old_idx: new_idx for new_idx, old_idx in enumerate(idx_to_keep)}
+
+        # Update samples and targets
+        base_dataset.samples = [(s[0], idx_remap[s[1]]) for s in filtered_samples]
+        base_dataset.targets = [idx_remap[s[1]] for s in filtered_samples]
+
+        # Update class_to_idx and classes
+        base_dataset.class_to_idx = {name: idx_remap[class_to_idx[name]] for name in class_names if name in class_to_idx}
+        base_dataset.classes = list(base_dataset.class_to_idx.keys())
 
     # Split dataset
     total_size = len(base_dataset)
@@ -218,48 +235,21 @@ def get_train_val_loaders(
     val_loader = DataLoader(val_subset, batch_size=config.BATCH_SIZE, shuffle=False,
                             num_workers=config.NUM_WORKERS, pin_memory=pin_memory)
     
-    # After creating the loaders
+    # Debug output
     print(f"Train loader batches: {len(train_loader)}")
     print(f"Val loader batches: {len(val_loader)}")
 
-    # Check a batch
-    img_train, label_train = next(iter(train_loader))
-    print("Train batch shape:", img_train.shape, "Labels:", label_train)
 
+    img_train, label_train = next(iter(train_loader))
     img_val, label_val = next(iter(val_loader))
+
+    print("Train batch shape:", img_train.shape, "Labels:", label_train)
     print("Val batch shape:", img_val.shape, "Labels:", label_val)
 
-    #pdb.set_trace()  # Start debugging
     print("Number of images in train_loader:", len(train_loader.dataset))
     print("Number of classes in train_loader:", len(train_loader.dataset.dataset.classes))
     print("Number of images in val_loader:", len(val_loader.dataset))
     print("Number of classes in val_loader:", len(val_loader.dataset.dataset.classes))
-
-    if False:
-        # Check class names
-        if hasattr(train_loader, 'dataset') and hasattr(train_loader.dataset, 'dataset') and hasattr(train_loader.dataset, 'classes'):
-            print("Classes:", train_loader.dataset.dataset.classes)
-
-        # Select the first image in the train batch
-        img_train_show = img_train[0].cpu().numpy()  # shape: (C, H, W)
-        img_train_show = img_train_show * 0.5 + 0.5  # Undo normalization
-        img_train_show = np.transpose(img_train_show, (1, 2, 0))  # (H, W, C)
-
-        # Select the first image in the val batch
-        img_val_show = img_val[0].cpu().numpy()
-        img_val_show = img_val_show * 0.5 + 0.5
-        img_val_show = np.transpose(img_val_show, (1, 2, 0))
-
-        # Show both images in a subplot
-        _, axs = plt.subplots(1, 2, figsize=(8, 4))
-        axs[0].imshow(img_train_show)
-        axs[0].set_title(f"Train Label: {label_train[0].item()}")
-        axs[0].axis('off')
-        axs[1].imshow(img_val_show)
-        axs[1].set_title(f"Val Label: {label_val[0].item()}")
-        axs[1].axis('off')
-        plt.tight_layout()
-        plt.show()
 
     return train_loader, val_loader
 
@@ -303,16 +293,17 @@ def show_imgEmseTsd(
 
 
 def show_tsg(
-    img,
-    e_extend,
-    e_deformed,
-    img_blur,
-    img_for_loss,
-    G_rough,
-    G_fine,
-    G_fine_resized,
-    G_fine_norm,
-    edge_map_from_syn
+    img=None,
+    e_extend=None,
+    e_deformed=None,
+    img_blur=None,
+    img_for_loss=None,
+    G_rough=None,
+    G_fine=None,
+    G_fine_resized=None,
+    G_fine_norm=None,
+    e_extend_G_fine=None,
+    e_edeformed_G_fine=None
 ):
     """
     Show the original image, deformed image, and edge map.
@@ -325,75 +316,111 @@ def show_tsg(
     :param G_fine:
     :param G_fine_resized:
     :param G_fine_norm:
-    :param edge_map_from_syn
+    :param e_extend_G_fine:
+    :param e_edeformed_G_fine:
     """
     
     # === Show the original and deformed image ===
-    plt.figure(figsize=(14, 14))  # Adjusted figure size
-    plt.subplot(3, 4, 1)
-    plt.axis('off')
-    plt.title('original image')
-    plt.imshow(np.clip(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.figure(figsize=(10.5, 10.5))  # Adjusted figure size
+        plt.subplot(3, 4, 1)
+        # plt.axis('off')
+        plt.title('original image')
+        plt.imshow(np.clip(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 2)
-    plt.axis('off')
-    plt.title('edge map')
-    plt.imshow(np.clip(e_extend[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 2)
+        # plt.axis('off')
+        plt.title('edge map')
+        plt.imshow(np.clip(e_extend[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 3)
-    plt.axis('off')
-    plt.title('deformed edge map')
-    plt.imshow(np.clip(e_deformed[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 3)
+        # plt.axis('off')
+        plt.title('deformed edge map')
+        plt.imshow(np.clip(e_deformed[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 4)
-    plt.axis('off')
-    plt.title('blured image')
-    plt.imshow(np.clip(img_blur[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 4)
+        # plt.axis('off')
+        plt.title('blured image')
+        plt.imshow(np.clip(img_blur[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 5)
-    plt.axis('off')
-    plt.title('image for loss')
-    plt.imshow(np.clip(img_for_loss[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 5)
+        # plt.axis('off')
+        plt.title('image for loss')
+        plt.imshow(np.clip(img_for_loss[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 6)
-    plt.axis('off')
-    plt.title('gen img s1')
-    plt.imshow(np.clip(G_rough[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 6)
+        # plt.axis('off')
+        plt.title('gen img s1')
+        plt.imshow(np.clip(G_rough[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 7)
-    plt.axis('off')
-    plt.title('gen img s2')
-    G_fine_f32 = G_fine.float()
-    plt.imshow(np.clip(G_fine_f32[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 7)
+        # plt.axis('off')
+        plt.title('gen img s2')
+        G_fine_f32 = G_fine.float()
+        plt.imshow(np.clip(G_fine_f32[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 8)
-    plt.axis('off')
-    plt.title('resized img s2')
-    plt.imshow(np.clip(G_fine_resized[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 8)
+        # plt.axis('off')
+        plt.title('resized img s2')
+        plt.imshow(np.clip(G_fine_resized[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 9)
-    plt.axis('off')
-    plt.title('norm res img s2')
-    plt.imshow(np.clip(G_fine_norm[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 9)
+        # plt.axis('off')
+        plt.title('norm res img s2')
+        plt.imshow(np.clip(G_fine_norm[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 10)
-    plt.axis('off')
-    plt.title('edge map gen img s2')
-    plt.imshow(np.clip(edge_map_from_syn[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 10)
+        # plt.axis('off')
+        plt.title('edge map gen img s2')
+        plt.imshow(np.clip(e_extend_G_fine[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 11)
-    plt.axis('off')
-    plt.title('def edge map gr-ch')
-    plt.imshow(np.clip(e_deformed[0, 0:1, :, :].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    try:
+        plt.subplot(3, 4, 11)
+        # plt.axis('off')
+        plt.title('def map gen img s2')
+        plt.imshow(np.clip(e_edeformed_G_fine[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    except:
+        pass
 
-    plt.subplot(3, 4, 12)
-    plt.axis('off')
-    plt.title('edge map gen img s2 gr-ch')
-    plt.imshow(np.clip(edge_map_from_syn[0, 0:1, :, :].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    # try:
+    #     plt.subplot(3, 4, 12)
+    #     # plt.axis('off')
+    #     plt.title('edge map gen img s2 gr-ch')
+    #     plt.imshow(np.clip(edge_map_from_syn[0, 0:1, :, :].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
+    # except:
+    #     pass
 
-    #pdb.set_trace()
     plt.show(block=False)
-    plt.pause(2)  # Show for 2 seconds (adjust as needed)
+    plt.pause(0.1)  # Show for 2 seconds (adjust as needed)
     plt.close()
 
 
