@@ -5,7 +5,7 @@
 
   "show_imgEmseTsd": false,
   "show_tsg": false,
-  "show_images_interval": 10,
+  "show_images_interval": 100,
 
   "save_path": "./Result",
 
@@ -13,32 +13,39 @@
 
   "device": "cuda",
   "batch_size": 10,
-  "epochs": 500,
+  "epochs": 999,
 
-  "path_tuned_D": "false./Result/20250729_131300/ImageNet256/tuned_D/Epoch_051.pth",
-  "path_tuned_G": "false./Result/20250729_131300/ImageNet256/tuned_G/Epoch_051.pth",
-  "path_optim_D": "false./Result/20250729_131300/ImageNet256/optim_D/Epoch_051.pth",
-  "path_optim_G_stage1": "false./Result/20250729_131300/ImageNet256/optim_G_stage1/Epoch_051.pth",
-  "path_optim_G_stage2": "false./Result/20250729_131300/ImageNet256/optim_G_stage2/Epoch_051.pth",
+  "path_tuned_D": "f./Result/20250804_155258/ImageNet256/tuned_D/Epoch_034.pth",
+  "path_optim_D_stage1": "f./Result/20250804_155258/ImageNet256/optim_D_stage1/Epoch_034.pth",
+  "path_optim_D_stage2": "f./Result/20250804_155258/ImageNet256/optim_D_stage2/Epoch_034.pth",
+  "path_tuned_G": "f./Result/20250804_155258/ImageNet256/tuned_G/Epoch_034.pth",
+  "path_optim_G_stage1": "f./Result/20250804_155258/ImageNet256/optim_G_stage1/Epoch_034.pth",
+  "path_optim_G_stage2": "f./Result/20250804_155258/ImageNet256/optim_G_stage2/Epoch_034.pth",
 
   "train_with_cls": true,
 
-  "downSize": 36,
+  "downSize": 64,
 
   "learning_rate": {
-    "discriminator": 0.0002,
-    "generator_stage1": 0.0002,
-    "generator_stage2": 0.0001
+    "discriminator_stage1": 1e-4,
+    "discriminator_stage2": 1e-4,
+    "generator_stage1": 1e-4,
+    "generator_stage2": 1e-4
   },
 
   "loss_weights": {
-    "lambda_l1": 0.5,
-    "lambda_cls": 1.0,
-    "lambda_edge": 5.0
+    "lambda_stage1_l1": 1.0,
+    "lambda_stage1_GAN": 1.0,
+    "lambda_stage1_CE": 0.5,
+
+    "lambda_stage2_l1": 1.0,
+    "lambda_stage2_GAN": 1.0,
+    "lambda_stage2_CE": 0.5,
+    "lambda_stage2_cls": 1.0,
+    "lambda_stage2_edge": 1.0
   },
 
-  "patience": 100,
-  "min_slope": 0.0005,
+  "patience": 50,
 
   "image_size": 128,
   "generator_input_dim": 64,
@@ -47,6 +54,8 @@
     "name": "ImageNet256",
     "path": "~/torch/data/ImageNet256",
     "num_classes": 1000,
+    "spare_synsets_1": {
+    },
     "SELECTED_SYNSETS": {
       "0": "abacus",
       "1": "academic_gown",
@@ -87,7 +96,9 @@
       "36": "beer_bottle",
       "37": "beer_glass",
       "38": "bell_pepper",
-      "39": "bib",
+      "39": "bib"
+    },
+    "spare_synsets_2": {
       "40": "bicycle_built_for_two",
       "41": "binder",
       "42": "binoculars",
