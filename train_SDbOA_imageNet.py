@@ -39,6 +39,65 @@ def create_saveFolder(save_path):
     """
     if not os.path.exists(save_path):
         os.makedirs(save_path)
+
+
+def export_weights(
+        config,
+        training_stage,
+        state,
+        epoch,
+        netD,
+        optimD_s1,
+        optimD_s2,
+        netG,
+        optimG_s1,
+        optimG_s2
+):
+    num_digits = len(str(config.EPOCHS))
+
+    # choose correct optimizer depending on training stage
+    if training_stage==1:
+        optimD=optimD_s1
+        optimG=optimG_s1
+    else:
+        optimD=optimD_s2
+        optimG=optimG_s2
+
+    # === Save Discriminator and its Optimizer >>>
+    # Save the Discriminator models
+    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_netD')
+    create_saveFolder(folder2save)  # Create folder to save tuned Discriminator
+    path2save = os.path.join(folder2save, f'netD__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+    torch.save(netD.state_dict(), path2save)  # Saves Diskriminator
+
+    # Save the Discriminator optimizer
+    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_optimD')
+    create_saveFolder(folder2save)  # Create folder to save tuned Generator
+    path2save = os.path.join(folder2save, f'optimD__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+    torch.save(optimD.state_dict(), path2save)
+    # <<< Save Discriminator and its Optimizer ===
+    
+
+    # === Save Generator and its Optimizer >>>
+    # Save the Generator models
+    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_netG')
+    create_saveFolder(folder2save)  # Create folder to save tuned Generator
+    path2save = os.path.join(folder2save, f'netG__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+    torch.save(netG.state_dict(), path2save)  # Saves Generator
+    # Save the Generator optimizer
+    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_optimG')
+    create_saveFolder(folder2save)  # Create folder to save tuned Generator
+    path2save = os.path.join(folder2save, f'optimG__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+    torch.save(optimG.state_dict(), path2save)
+    # <<< Save Generator and its Optimizer ===
+
+
+def seconds_to_hhmmss(seconds):
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
         
 
 # Path of the current script
@@ -54,7 +113,7 @@ folder2save_log = os.path.join(config.SAVE_PATH)
 create_saveFolder(folder2save_log)  # Create folder to save log
 path2save_log = os.path.join(folder2save_log, f'log.txt')  # Path to save the log
 
-# Log-Datei öffnen und stdout + stderr umleiten
+# Log-Datei öffnen und stdout + stderr umlcsv_epochs_output_patheiten
 log_file = open(path2save_log, "w")
 sys.stdout = Tee(sys.__stdout__, log_file)
 sys.stderr = Tee(sys.__stderr__, log_file)
@@ -64,8 +123,10 @@ if not config.DEVICE.type=="cpu":
     torch.cuda.empty_cache()
 
 if __name__ == "__main__":
-    # # start debugging
-    # pdb.set_trace()
+    # start debugging
+    #pdb.set_trace()
+
+    time_trainingStart = time.time()
 
     print("=================================================")
     print(f"===== TRAINING STARTET {datetime.now().strftime('%d.%m.%Y, %H-%M-%S')} =====")
@@ -84,6 +145,9 @@ if __name__ == "__main__":
     tsd     = TSD(config=config)     # Initialize TSD class
     tsg     = TSG(config=config)     # Initialize TSG class
 
+    # get correct weights for classifier
+    cls_weights = ResNet18_Weights.DEFAULT
+
     # Transformations for preprocessing training data
     transform_train = transforms.Compose([
         transforms.Resize(config.IMG_SIZE),
@@ -100,6 +164,9 @@ if __name__ == "__main__":
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
+
+    # Transformations for classifier
+    transform_cls = cls_weights.transforms()
 
 
     # === Load the dataset (ImageNet) ===
@@ -129,7 +196,7 @@ if __name__ == "__main__":
     # === Initialize networks (and move to CPU/GPU) ===
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
-    cls     = torch_models.resnet18(weights=ResNet18_Weights.DEFAULT)
+    cls     = torch_models.resnet18(weights=cls_weights)
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
     cls     = cls.to(config.DEVICE)
     
@@ -169,25 +236,63 @@ if __name__ == "__main__":
 
 
     # === Initialize optimizers ===
-    optimD = optim.Adam(netD.parameters(), lr=config.LR_DISC, betas=(0.5, 0.999))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimG_stage1 = optim.Adam(netG.parameters(), lr=config.LR_GEN_S1, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
-    optimG_stage2 = optim.Adam(netG.parameters(), lr=config.LR_GEN_S2, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
+    optimD_stage1 = optim.Adam(netD.parameters(), lr=config.LR_D_S1, betas=(0.5, 0.999))    # Optimizer for Discriminator (GAN-typical Betas)
+    optimD_stage2 = optim.Adam(netD.parameters(), lr=config.LR_D_S2, betas=(0.5, 0.999))    # Optimizer for Discriminator (GAN-typical Betas)
+    optimG_stage1 = optim.Adam(netG.parameters(), lr=config.LR_G_S1, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
+    optimG_stage2 = optim.Adam(netG.parameters(), lr=config.LR_G_S2, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
+
+    if os.path.exists(config.PATH_OPTIM_D_S1):
+        optimD_stage1.load_state_dict(torch.load(config.PATH_OPTIM_D_S1))
+        print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_OPTIM_D_S1}")
+    if os.path.exists(config.PATH_OPTIM_D_S2):
+        optimD_stage2.load_state_dict(torch.load(config.PATH_OPTIM_D_S2))
+        print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_OPTIM_D_S2}")
 
     if os.path.exists(config.PATH_OPTIM_G_S1):
         optimG_stage1.load_state_dict(torch.load(config.PATH_OPTIM_G_S1))
-        print(f"Loaded Generator-Optimizer checkpoint from {config.PATH_TUNED_G_S1}")
-
+        print(f"Loaded Generator-Optimizer checkpoint from {config.PATH_OPTIM_G_S1}")
     if os.path.exists(config.PATH_OPTIM_G_S2):
         optimG_stage2.load_state_dict(torch.load(config.PATH_OPTIM_G_S2))
-        print(f"Loaded Generator-Optimizer checkpoint from {config.PATH_TUNED_G_S2}")
+        print(f"Loaded Generator-Optimizer checkpoint from {config.PATH_OPTIM_G_S2}")
 
-    if os.path.exists(config.PATH_OPTIM_D):
-        optimD.load_state_dict(torch.load(config.PATH_OPTIM_D))
-        print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_TUNED_D}")
-
-    # Scheduler for generator
-    scheduler_G_stage1 = ReduceLROnPlateau(optimG_stage1, mode='min', factor=0.5, patience=5, threshold=1e-4, verbose=True)
-    scheduler_G_stage2 = ReduceLROnPlateau(optimG_stage2, mode='min', factor=0.5, patience=5, threshold=1e-4, verbose=True)
+    # === Initialize Scheduler ===
+    scheduler_mode = 'min'
+    scheduler_factor = 0.6
+    scheduler_patience = 7
+    scheduler_threshold = 1e-3
+    scheduler_minLr = 1e-7
+    scheduler_D_stage1 = ReduceLROnPlateau(
+        optimD_stage1,
+        mode=scheduler_mode,
+        factor=scheduler_factor,
+        patience=scheduler_patience,
+        threshold=scheduler_threshold,
+        min_lr=scheduler_minLr
+    )
+    scheduler_D_stage2 = ReduceLROnPlateau(
+        optimD_stage2,
+        mode=scheduler_mode,
+        factor=scheduler_factor,
+        patience=scheduler_patience,
+        threshold=scheduler_threshold,
+        min_lr=scheduler_minLr
+    )
+    scheduler_G_stage1 = ReduceLROnPlateau(
+        optimG_stage1,
+        mode=scheduler_mode,
+        factor=scheduler_factor,
+        patience=scheduler_patience,
+        threshold=scheduler_threshold,
+        min_lr=scheduler_minLr
+    )
+    scheduler_G_stage2 = ReduceLROnPlateau(
+        optimG_stage2,
+        mode=scheduler_mode,
+        factor=scheduler_factor,
+        patience=scheduler_patience,
+        threshold=scheduler_threshold,
+        min_lr=scheduler_minLr
+    )
 
 
     # === Initialize loss functions === 
@@ -235,27 +340,40 @@ if __name__ == "__main__":
     
     # Liste zum Speichern der Metriken
     epoch_metrics = []
+    iteration_metrics = []
 
     # Zielordner mit aktuellem Datum anlegen
-    csv_output_dir = os.path.join(config.SAVE_PATH, "epoch_metrics")
+    csv_output_dir = os.path.join(config.SAVE_PATH, "metrics")
     os.makedirs(csv_output_dir, exist_ok=True)
 
     # Pfad zur CSV-Datei
-    csv_output_path = os.path.join(csv_output_dir, "SDbOA_metrics.csv")
+    csv_iters_output_path = os.path.join(csv_output_dir, "iterations_metrics.csv")
+    csv_epochs_output_path = os.path.join(csv_output_dir, "epoch_metrics.csv")
     
 
    
     ##### ===== TRAINING ===== #####
+    # === start training in stage 1 ===
+    training_stage = 1
+    best_val_loss = None
+    counter_noBetterValLoss = 0
     for epoch in range(config.EPOCHS):
         print("")
         print("")
         print("===================================")
         print(f"=== Training at Epoch {epoch+1:0{num_digits}d} / {config.EPOCHS} ===")
+        print(f"======= currently in STAGE {training_stage} ======")
         print("===================================")
-        current_lr_G_s1 = optimG_stage1.param_groups[0]['lr']
-        print(f"Generator LR stage1: {current_lr_G_s1:.6f}")
-        current_lr_G_s2 = optimG_stage1.param_groups[0]['lr']
-        print(f"Generator LR stage2: {current_lr_G_s2:.6f}")
+        if training_stage==1:
+            current_lr_D = optimD_stage1.param_groups[0]['lr']
+            current_lr_G = optimG_stage1.param_groups[0]['lr']
+            print(f"Generator LR    : {current_lr_G:.6f}")
+            print(f"Discriminator LR: {current_lr_D:.6f}")
+        else:
+            current_lr_D = optimD_stage2.param_groups[0]['lr']
+            current_lr_G = optimG_stage2.param_groups[0]['lr']
+            print(f"Generator LR    : {current_lr_G:.6f}")
+            print(f"Discriminator LR: {current_lr_D:.6f}")
         
 
         # === Training Phase ===
@@ -263,8 +381,10 @@ if __name__ == "__main__":
         netD.train()
         cls.eval()
 
+        # === Initializations ===
         # Initialize GradScaler for mixed precision training
         scaler = torch.amp.GradScaler()
+        # Initialize time lists
         time_Iteration = []  # Start time for iteration
         time_EMSE = []
         time_TSD = []
@@ -274,7 +394,8 @@ if __name__ == "__main__":
         time_TSG.time_trainCls = []
         time_TSG.time_trainG2 = []
         time_TSG.time_tot = []
-        itersForAverageCalc = 10
+        
+        # === Start Iteration ===
         pbar = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True, file=sys.__stderr__, ncols=100)
         for i, (img, label) in pbar:
             time_startIteration = time.time()
@@ -308,58 +429,89 @@ if __name__ == "__main__":
 
             # === TSG >>>
             time_startTSG = time.time()
-            netD, netG, cls, optimD, optimG_stage1, optimG_stage2, CE_loss, L1_loss, loss, time_, scaler = tsg.doTSG_training(
-                i, config, emse, img, label, edgeMap, deformedImg, netD, netG, cls,
-                optimD, optimG_stage1, optimG_stage2, CE_loss, L1_loss, time_TSG, scaler, downSize=config.DOWN_SIZE
-            )
+            if training_stage==1:
+                netD, netG, optimD_stage1, optimG_stage1, loss, time_TSG = tsg.doTSG_stage1_training(
+                    iteration=i,
+                    config=config,
+                    img=img,
+                    label=label,
+                    e_extend=edgeMap,
+                    netD=netD,
+                    netG=netG,
+                    optimD=optimD_stage1,
+                    optimG=optimG_stage1,
+                    CE_loss=CE_loss,
+                    L1_loss=L1_loss,
+                    time_TSG=time_TSG,
+                    scaler=scaler
+                )
+            else:
+                netD, netG, optimD_stage2, optimG_stage2, loss, time_TSG = tsg.doTSG_stage2_training(
+                    iteration=i,
+                    config=config,
+                    emse=emse,
+                    img=img,
+                    label=label,
+                    e_deformed=deformedImg,
+                    netD=netD,
+                    netG=netG,
+                    cls=cls,
+                    transform_cls=transform_cls,
+                    optimD=optimD_stage2,
+                    optimG=optimG_stage2,
+                    CE_loss=CE_loss,
+                    L1_loss=L1_loss,
+                    time_TSG=time_TSG,
+                    scaler=scaler
+                )
             time_TSG.time_tot.append(time.time() - time_startTSG)
             # <<< TSG ===
 
             time_Iteration.append(time.time() - time_startIteration)
-
-            # # Calculate times
-            # if i==itersForAverageCalc-1:
-            #     print(f"Time taken for {i+1} iterations: {round(sum(time_Iteration), 4)} s")
-            #     print("Epoch will roughly take: ", round(sum(time_Iteration)/itersForAverageCalc * len(train_loader) / 60, 4), " min")
-            #     print('----------')
-            #     print(f"Average times after {i+1} iterations:")
-            #     print("     Iteration:      ", round(sum(time_Iteration)/(i+1), 4), " s")
-            #     print("     EMSE:           ", round(sum(time_EMSE)/(i+1), 4), " s")
-            #     print("     TSD:            ", round(sum(time_TSD)/(i+1), 4), " s")
-            #     print("     TSG (total):    ", round(sum(time_TSG.time_tot)/(i+1), 4), " s")
-            #     print("     TSG (trainD):   ", round(sum(time_TSG.time_trainD)/(i+1), 4), " s")
-            #     print("     TSG (trainG1):  ", round(sum(time_TSG.time_trainG1)/(i+1), 4), " s")
-            #     print("     TSG (trainCls): ", round(sum(time_TSG.time_trainCls)/(i+1), 4), " s")
-            #     print("     TSG (trainG2):  ", round(sum(time_TSG.time_trainG2)/(i+1), 4), " s")
-            #     print("----------")
-            # elif (i+1) % config.LOG_INTERVAL == 0 and (i+1) > itersForAverageCalc:
-            #     print(f"Epoch[{epoch + 1} / {config.EPOCHS}][{i+1} / {len(train_loader)}] LOSS:")
-            #     print(f"    Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {loss.stage1_D_loss.item():.4f}")
-            #     print(f"    Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {loss.stage1_G_loss.item():.4f}")
-            #     if config.TRAIN_WITH_CLS:
-            #         print(f"    Classifier loss: {loss.cls_loss.item():.4f}")
-            #         print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {loss.stage2_G_loss.item():.4f}")
-            #     else:
-            #         print(f"    Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {loss.stage2_G_loss.item():.4f}")
-            #     print("----------")
             
             pbar.set_postfix({
                 "Iter": f"{time_Iteration[-1]:.2f}s",
                 "EMSE": f"{time_EMSE[-1]:.2f}s",
                 "TSD": f"{time_TSD[-1]:.2f}s",
                 "TSG": f"{time_TSG.time_tot[-1]:.2f}s",
-                "D": f"{loss.stage1_D_loss.item():.2f}",
-                "G1": f"{loss.stage1_G_loss.item():.2f}",
-                "G2": f"{loss.stage2_G_loss.item():.2f}",
-                **({"Cls": f"{loss.cls_loss.item():.2f}"} if config.TRAIN_WITH_CLS else {})
+                "D": f"{loss.D_loss.item():.2f}",
+                f"G{training_stage}": f"{loss.G_loss.item():.2f}",
+                **({"Cls": f"{loss.cls_loss.item():.2f}"} if config.TRAIN_WITH_CLS and training_stage==2 else {})
             })
+
+
+            # === save metrics of this iteration ===
+            iteration_metric = {
+                "epoch": epoch + 1,
+                "iteration": i + 1,
+                "stage": training_stage,
+                "discriminator_loss": float(loss.D_loss.item()),
+                "generator_loss": float(loss.G_loss.item()),
+                "classifier_loss": float(loss.cls_loss.item()) if config.TRAIN_WITH_CLS and training_stage==2 else None,
+                "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
+                "MMA@3": None,
+                "HomographyAcc": None
+            }
+            iteration_metrics.append(iteration_metric)
+
+
+            # === Write all metrics as csv-file ===
+            csv_fields = iteration_metrics[0].keys() if iteration_metrics else []
+
+            with open(csv_iters_output_path, mode='w', newline='') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
+                writer.writeheader()
+                writer.writerows(iteration_metrics)
+
 
             # For debugging: Stop after a certain number of iterations
             if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START + config.DEBUG_ITERS_AMOUNT:
                 break
 
+        ### === END OF ITERATION === ###
+
         # Save the results and models afer every epochs
-        path2save_epochImg = os.path.join(folder2save_epochImg, f'Epoch_{epoch+1:0{num_digits}d}.png')  # Path to save the results
+        path2save_epochImg = os.path.join(folder2save_epochImg, f'Stage{training_stage}_Epoch_{epoch+1:0{num_digits}d}.png')  # Path to save the results
         try:
             show_result(  # Shows the result of actual epoch
                 config=config,
@@ -376,39 +528,18 @@ if __name__ == "__main__":
             print(f"IndexError: {e}")
 
 
-        # === Save Discriminator and its Optimizer >>>
-        # Save the Discriminator models after every epoch
-        folder2save_tunedD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'tuned_D')
-        create_saveFolder(folder2save_tunedD)  # Create folder to save tuned Discriminator
-        path2save_tunedD = os.path.join(folder2save_tunedD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-        torch.save(netD.state_dict(), path2save_tunedD)  # Saves Diskriminator
-
-        # Save the Discriminator optimizer after every epoch
-        folder2save_optimD = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_D')
-        create_saveFolder(folder2save_optimD)  # Create folder to save tuned Generator
-        path2save_optimD = os.path.join(folder2save_optimD, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-        torch.save(optimD.state_dict(), path2save_optimD)
-        # <<< Save Discriminator and its Optimizer ===
-        
-
-        # === Save Generator and its Optimizer >>>
-        # Save the Generator models after every epoch
-        folder2save_tunedG = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'tuned_G')
-        create_saveFolder(folder2save_tunedG)  # Create folder to save tuned Generator
-        path2save_tunedG = os.path.join(folder2save_tunedG, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-        torch.save(netG.state_dict(), path2save_tunedG)  # Saves Generator
-
-        # Save the Generator optimizer of stage 1 after every epoch
-        folder2save_optimG_stage1 = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_G_stage1')
-        create_saveFolder(folder2save_optimG_stage1)  # Create folder to save tuned Generator
-        path2save_optimG_stage1 = os.path.join(folder2save_optimG_stage1, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-        torch.save(optimG_stage1.state_dict(), path2save_optimG_stage1)
-        # Save the Generator optimizer of stage 2 after every epoch
-        folder2save_optimG_stage2 = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'optim_G_stage2')
-        create_saveFolder(folder2save_optimG_stage2)  # Create folder to save tuned Generator
-        path2save_optimG_stage2 = os.path.join(folder2save_optimG_stage2, f'Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-        torch.save(optimG_stage2.state_dict(), path2save_optimG_stage2)
-        # <<< Save Generator and its Optimizer ===
+        export_weights(
+            config=config,
+            training_stage=training_stage,
+            state='tuned',
+            epoch=epoch,
+            netD=netD,
+            optimD_s1=optimD_stage1,
+            optimD_s2=optimD_stage2,
+            netG=netG,
+            optimG_s1=optimG_stage1,
+            optimG_s2=optimG_stage2
+        )
 
 
         # === VALIDATION ===
@@ -424,19 +555,20 @@ if __name__ == "__main__":
         total   = torch.zeros(1).squeeze().to(config.DEVICE, non_blocking=True)
 
         # initialize accumulators
-        total_stage1_D_loss = 0.0
-        total_stage1_G_loss = 0.0
-        total_stage2_G_loss = 0.0
+        total_D_loss = 0.0
+        total_G_loss = 0.0
         total_cls_loss = 0.0
+        acc = 0.0
 
         # Only validate every N epochs
         if epoch % 1 == 0:
             print("")
             print("=====================================")
             print(f"=== Validating at Epoch {epoch+1:0{num_digits}d} / {config.EPOCHS} ===")
+            print(f"======== currently in STAGE {training_stage} =======")
             print("=====================================")
             with torch.no_grad():
-                pbar = tqdm(enumerate(val_loader), total=len(val_loader), desc=f"Validating {epoch+1}", dynamic_ncols=True, file=sys.__stderr__, ncols=100)
+                pbar = tqdm(enumerate(val_loader), total=len(val_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True, file=sys.__stderr__, ncols=100)
                 for i, (img, label) in pbar:
                     time_startValIteration = time.time()
 
@@ -454,39 +586,47 @@ if __name__ == "__main__":
                     # <<< EMSE ===
 
                     # === TSD >>>
-                    # TSD module is not used in the validation phase
-                    # --> no deformation of the image
-                    # deformed image is the same as edge map
-                    deformedImg = edgeMap
+                    time_startTsd = time.time()
+                    deformedImg = tsd.doTSD(edgeMap)
+                    time_tsd = time.time() - time_startTsd
                     # <<< TSD ===
 
                     # === Generation and Classification >>>
                     time_startTsg = time.time()
-                    loss, cls_prediction = tsg.doTSG_testing(
-                        config=config,
-                        emse=emse,
-                        img=img,
-                        label=label,
-                        e_extend=edgeMap,
-                        e_deformed=deformedImg,
-                        netD=netD,
-                        netG=netG,
-                        cls=cls,
-                        CE_loss=CE_loss,
-                        L1_loss=L1_loss,
-                        downSize=config.DOWN_SIZE
-                    )
+                    if training_stage==1:
+                        loss = tsg.doTSG_stage1_testing(
+                            config=config,
+                            img=img,
+                            label=label,
+                            e_extend=edgeMap,
+                            netD=netD,
+                            netG=netG,
+                            CE_loss=CE_loss,
+                            L1_loss=L1_loss
+                        )
+                    else:
+                        loss, cls_prediction = tsg.doTSG_stage2_testing(
+                            config=config,
+                            emse=emse,
+                            img=img,
+                            label=label,
+                            e_deformed=deformedImg,
+                            netD=netD,
+                            netG=netG,
+                            cls=cls,
+                            transform_cls=transform_cls,
+                            CE_loss=CE_loss,
+                            L1_loss=L1_loss
+                        )
+                        # Count correct predictions and total predictions to calculate accuracy
+                        correct += (cls_prediction == label).sum().float()
+                        acc = (correct / total).cpu().detach().data.numpy()
                     time_tsg = time.time() - time_startTsg
                     # <<< Generation and Classification ===
 
-                    # Count correct predictions and total predictions
-                    correct += (cls_prediction == label).sum().float()
-                    total += len(label)
-
-                    total_stage1_D_loss += loss.stage1_D_loss.item()
-                    total_stage1_G_loss += loss.stage1_G_loss.item()
-                    total_stage2_G_loss += loss.stage2_G_loss.item()
-                    if config.TRAIN_WITH_CLS:
+                    total_D_loss += loss.D_loss.item()
+                    total_G_loss += loss.G_loss.item()
+                    if config.TRAIN_WITH_CLS and training_stage==2:
                         total_cls_loss += loss.cls_loss.item()
 
                     time_valIteration = time.time() - time_startValIteration
@@ -494,35 +634,57 @@ if __name__ == "__main__":
                     pbar.set_postfix({
                         "Iter": f"{time_valIteration:.2f}s",
                         "EMSE": f"{time_emse:.2f}s",
+                        "TSD": f"{time_tsd:.2f}s",
                         "TSG": f"{time_tsg:.2f}s",
-                        "D": f"{loss.stage1_D_loss.item():.2f}",
-                        "G1": f"{loss.stage1_G_loss.item():.2f}",
-                        "G2": f"{loss.stage2_G_loss.item():.2f}",
-                        **({"Cls": f"{loss.cls_loss.item():.2f}"} if config.TRAIN_WITH_CLS else {})
+                        "D": f"{loss.D_loss.item():.2f}",
+                        f"G{training_stage}": f"{loss.G_loss.item():.2f}",
+                        **({"Cls": f"{loss.cls_loss.item():.2f}"} if config.TRAIN_WITH_CLS and training_stage==2 else {})
                     })
 
                     # For debuging (Training of even one Epoch takes very long)
                     if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START+config.DEBUG_ITERS_AMOUNT:
                         break
 
-                # Calculate accuracy, append to history and print
-                acc = (correct / total).cpu().detach().data.numpy()
-                config.acc_history.append(acc)
-
                 # calculate average losses
-                avg_stage1_D_loss = total_stage1_D_loss / total
-                avg_stage1_G_loss = total_stage1_G_loss / total
-                avg_stage2_G_loss = total_stage2_G_loss / total
-                avg_cls_loss = total_cls_loss / total
+                total_items = max(len(val_loader), 1)
+                avg_D_loss = total_D_loss / total_items
+                avg_G_loss = total_G_loss / total_items
+                current_val_loss = avg_G_loss
+                if training_stage==2:
+                    avg_cls_loss = total_cls_loss / total_items
+
+                # Print results
+                lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
+                lamda_GAN = config.LAMBDA_S2_GAN # original: 1.0
+                lambda_CE = config.LAMBDA_S2_CE # original: 0.5
+                lambda_cls = config.LAMBDA_S2_CLS # original: 1.0
+                lambda_edge = config.LAMBDA_S2_EDGE # original: 1.0
+                if training_stage==1:
+                    print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+0.5*D_celoss = {avg_D_loss:.4f}")
+                    print(f"Generator loss:     {config.LAMBDA_S1_L1}*G_L1_loss_rough-{config.LAMBDA_S1_GAN}*D_result_roughImg+{config.LAMBDA_S1_CE}*G_celoss_rough = {avg_G_loss:.4f}")
+                else:
+                    print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+0.5*D_celoss = {avg_D_loss:.4f}")
+                    if config.TRAIN_WITH_CLS and training_stage==2:
+                        print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_CLS}*cls_loss+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
+                        print(f"Classifier loss: {avg_cls_loss:.4f}")
+                        print(f"Accuracy: correct/total = {correct}/{total} = {acc}")
+                    else:
+                        print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
+                
+                val_end_time = time.time()
+                val_duration = val_end_time - val_start_time
+                fps = float(total.cpu()) / val_duration
+                print(f"Validation Inference Speed: {fps:.0f} FPS")
+
 
                 # === save metrics of this epoch ===
                 epoch_metric = {
                     "epoch": epoch + 1,
-                    "accuracy": float(acc),
-                    "discriminator_loss": float(avg_stage1_D_loss),
-                    "generator_loss_stage1": float(avg_stage1_G_loss),
-                    "generator_loss_stage2": float(avg_stage2_G_loss),
-                    "classifier_loss": float(avg_cls_loss) if config.TRAIN_WITH_CLS else None,
+                    "stage": training_stage,
+                    "accuracy": float(acc) if training_stage==2 else None,
+                    "discriminator_loss": float(avg_D_loss),
+                    "generator_loss": float(avg_G_loss),
+                    "classifier_loss": float(avg_cls_loss) if config.TRAIN_WITH_CLS and training_stage==2 else None,
                     "FPS": round(fps, 2),
                     "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
                     "MMA@3": None,
@@ -530,46 +692,95 @@ if __name__ == "__main__":
                 }
                 epoch_metrics.append(epoch_metric)
 
-                # Print results
-                print(f"accuracy: correct/total = {correct}/{total} = {acc}")
-                print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+(0.5*D_celoss) = {avg_stage1_D_loss:.4f}")
-                print(f"Generator loss Stage 1: G_L1_loss_rough-D_result_roughImg+(0.5*G_celoss_rough) = {avg_stage1_G_loss:.4f}")
-                if config.TRAIN_WITH_CLS:
-                    print(f"Classifier loss: {avg_cls_loss:.4f}")
-                    print(f"Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss+cls_loss = {avg_stage2_G_loss:.4f}")
-                else:
-                    print(f"Generator loss Stage 2: G_L1_loss_fine-D_result_fineImg+G_celoss_fine+edge_loss = {avg_stage2_G_loss:.4f}")
-                
-                val_end_time = time.time()
-                val_duration = val_end_time - val_start_time
-                fps = float(total.cpu()) / val_duration
-                print(f"Validation Inference Speed: {fps:.2f} FPS")
 
-
-                # Early stopping
-                if len(config.acc_history) >= config.PATIENCE:
-                    slope = np.polyfit(range(config.PATIENCE), list(config.acc_history), 1)[0]
-                    print(f"Slope of accuracy trend: {slope:.6f}")
-                    if slope < config.MIN_SLOPE:
-                        print(f"Early stopping at epoch {epoch + 1}: accuracy trend too flat.")
-                        break
-
-                # === Schreibe alle Metriken als CSV-Datei ===
+                # === Write all metrics as csv-file ===
                 csv_fields = epoch_metrics[0].keys() if epoch_metrics else []
 
-                with open(csv_output_path, mode='w', newline='') as csvfile:
+                with open(csv_epochs_output_path, mode='w', newline='') as csvfile:
                     writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
                     writer.writeheader()
                     writer.writerows(epoch_metrics)
 
-        
 
-        # adapt generator learning-rate
-        scheduler_G_stage1.step(loss.stage1_G_loss.item())
-        scheduler_G_stage2.step(loss.stage2_G_loss.item())
+                # === Early stopping / Early switching to stage 2 ===
+                # Calculate current validiation loss
+                print(f"Total items: {total_items}")
+                if best_val_loss != None:
+                    if current_val_loss <= best_val_loss:
+                        best_val_loss = current_val_loss
+                        netD_best = netD
+                        netG_best = netG
+                        if training_stage==1:
+                            optimD_best = optimD_stage1
+                            optimG_best = optimG_stage1
+                        else:
+                            optimD_best = optimD_stage2
+                            optimG_best = optimG_stage2
+                        counter_noBetterValLoss = 0
+                    else:
+                        counter_noBetterValLoss += 1
+                        if counter_noBetterValLoss >= config.PATIENCE:
+                            # Save the best models
+                            export_weights(
+                                config=config,
+                                training_stage=training_stage,
+                                state='best',
+                                epoch=epoch,
+                                netD=netD_best,
+                                optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                                optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                                netG=netG_best,
+                                optimG_s1=optimG_best,
+                                optimG_s2=optimG_best
+                            )
+                            if training_stage==1:
+                                training_stage = 2
+                                netD = netD_best
+                                netG = netG_best
+                                best_val_loss = None
+                                counter_noBetterValLoss = 0
+                            else:
+                                print(f"counter for no better val loss = {counter_noBetterValLoss}")
+                                if current_val_loss:
+                                    print(f"last current val loss = avg_G_loss = {current_val_loss:.4f}")
+                                if best_val_loss:
+                                    print(f"last best val loss = avg_G_loss = {best_val_loss:.4f}")
+                                break
+                else:
+                    best_val_loss = current_val_loss
+                    netD_best = netD
+                    netG_best = netG
+                    if training_stage==1:
+                        optimD_best = optimD_stage1
+                        optimG_best = optimG_stage1
+                    else:
+                        optimD_best = optimD_stage2
+                        optimG_best = optimG_stage2
+                    counter_noBetterValLoss = 0
+
+                print(f"counter for no better val loss = {counter_noBetterValLoss}")
+                if current_val_loss:
+                    print(f"current val loss = avg_G_loss = {current_val_loss:.4f}")
+                if best_val_loss:
+                    print(f"best val loss = avg_G_loss = {best_val_loss:.4f}")
+
+        ### === END OF VALIDATION === ###
+
+        # adapt learning-rate
+        if training_stage==1:
+            scheduler_D_stage1.step(avg_D_loss)
+            scheduler_G_stage1.step(avg_G_loss)
+        else:
+            scheduler_D_stage2.step(avg_D_loss)
+            scheduler_G_stage2.step(avg_G_loss)
+
+    ### END OF EPOCH === ###
+
+    time_forTraining = time.time()-time_trainingStart
 
     print("")
     print("")
     print("===============================================")
     print(f"===== TRAINING ENDED {datetime.now().strftime('%d.%m.%Y, %H-%M-%S')} =====")
+    print(f"====== Complete training time: {seconds_to_hhmmss(time_forTraining)} ======")
     print("===============================================")
