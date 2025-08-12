@@ -1,0 +1,73 @@
+{
+  "debug_mode": true,
+  "debugIterations_strt": 0,
+  "debugIterations_amount": 1000,
+
+  "show_imgEmseTsd": false,
+  "show_tsg": true,
+  "show_images_interval": 100,
+
+  "save_path": "./Result",
+
+  "log_interval": 10,
+
+  "device": "cuda",
+  "batch_size": 1,
+  "epochs": 999,
+
+  "path_tuned_D": "f./Result/20250804_155258/CIFAR10/tuned_D/Epoch_034.pth",
+  "path_optim_D_stage1": "f./Result/20250804_155258/CIFAR10/optim_D_stage1/Epoch_034.pth",
+  "path_optim_D_stage2": "f./Result/20250804_155258/CIFAR10/optim_D_stage2/Epoch_034.pth",
+  "path_tuned_G": "f./Result/20250804_155258/CIFAR10/tuned_G/Epoch_034.pth",
+  "path_optim_G_stage1": "f./Result/20250804_155258/CIFAR10/optim_G_stage1/Epoch_034.pth",
+  "path_optim_G_stage2": "f./Result/20250804_155258/CIFAR10/optim_G_stage2/Epoch_034.pth",
+
+  "train_with_cls": true,
+
+  "downSize": 12,
+
+  "learning_rate": {
+    "discriminator_stage1": 1e-4,
+    "discriminator_stage2": 1e-4,
+    "generator_stage1": 1e-4,
+    "generator_stage2": 1e-4
+  },
+
+  "loss_weights": {
+    "lambda_stage1_l1": 1.0,
+    "lambda_stage1_GAN": 1.0,
+    "lambda_stage1_CE": 0.5,
+
+    "lambda_stage2_l1": 1.0,
+    "lambda_stage2_GAN": 1.0,
+    "lambda_stage2_CE": 0.5,
+    "lambda_stage2_cls": 1.0,
+    "lambda_stage2_edge": 1.0
+  },
+
+  "patience": 5,
+
+  "image_size": 32,
+  "generator_input_dim": 16,
+
+  "dataset": {
+    "name": "CIFAR10",
+    "path": "src/cifar10_batches_jpg",
+    "spare_synsets_1": {
+    },
+    "SELECTED_SYNSETS": {
+      "0": "airplane",
+      "1": "automobile",
+      "2": "bird",
+      "3": "cat",
+      "4": "deer",
+      "5": "dog",
+      "6": "frog",
+      "7": "horse",
+      "8": "ship",
+      "9": "truck"
+    },
+    "spare_synsets_2": {
+    }
+  }
+}
