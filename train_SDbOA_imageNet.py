@@ -552,7 +552,6 @@ if __name__ == "__main__":
 
         # Counter for correct predictions and total predictions
         correct = torch.zeros(1).squeeze().to(config.DEVICE, non_blocking=True)
-        total   = torch.zeros(1).squeeze().to(config.DEVICE, non_blocking=True)
 
         # initialize accumulators
         total_D_loss = 0.0
@@ -620,7 +619,6 @@ if __name__ == "__main__":
                         )
                         # Count correct predictions and total predictions to calculate accuracy
                         correct += (cls_prediction == label).sum().float()
-                        acc = (correct / total).cpu().detach().data.numpy()
                     time_tsg = time.time() - time_startTsg
                     # <<< Generation and Classification ===
 
@@ -646,12 +644,14 @@ if __name__ == "__main__":
                         break
 
                 # calculate average losses
-                total_items = max(len(val_loader), 1)
-                avg_D_loss = total_D_loss / total_items
-                avg_G_loss = total_G_loss / total_items
+                total_batches = max(len(val_loader), 1)
+                total_items = total_batches*config.BATCH_SIZE
+                avg_D_loss = total_D_loss / total_batches
+                avg_G_loss = total_G_loss / total_batches
                 current_val_loss = avg_G_loss
                 if training_stage==2:
-                    avg_cls_loss = total_cls_loss / total_items
+                    avg_cls_loss = total_cls_loss / total_batches
+                    acc = (correct / total_items).cpu().detach().data.numpy()
 
                 # Print results
                 lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
@@ -667,13 +667,13 @@ if __name__ == "__main__":
                     if config.TRAIN_WITH_CLS and training_stage==2:
                         print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_CLS}*cls_loss+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
                         print(f"Classifier loss: {avg_cls_loss:.4f}")
-                        print(f"Accuracy: correct/total = {correct}/{total} = {acc}")
+                        print(f"Accuracy: correct/total = {correct}/{total_items} = {acc}")
                     else:
                         print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
                 
                 val_end_time = time.time()
                 val_duration = val_end_time - val_start_time
-                fps = float(total.cpu()) / val_duration
+                fps = float(total_items.cpu()) / val_duration
                 print(f"Validation Inference Speed: {fps:.0f} FPS")
 
 
@@ -704,6 +704,7 @@ if __name__ == "__main__":
 
                 # === Early stopping / Early switching to stage 2 ===
                 # Calculate current validiation loss
+                print(f"Total batches: {total_batches}")
                 print(f"Total items: {total_items}")
                 if best_val_loss != None:
                     if current_val_loss <= best_val_loss:
