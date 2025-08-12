@@ -1,0 +1,18 @@
+torch
+torchvision
+requests
+Pillow
+numpy
+opencv-contrib-python
+opencv-contrib-python-headless
+tqdm
+matplotlib
+kornia
+gdown
+tensorboard
+h5py
+scikit-image
+pytz
+
+# Externes GitHub-Paket
+git+https://github.com/PoseLib/PoseLib.git
