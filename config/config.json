@@ -1,18 +1,18 @@
 {
-  "debug_mode": false,
+  "debug_mode": true,
   "debugIterations_strt": 0,
-  "debugIterations_amount": 40,
+  "debugIterations_amount": 10,
 
   "show_imgEmseTsd": false,
-  "show_tsg": false,
-  "show_images_interval": 100,
+  "show_tsg": true,
+  "show_images_interval": 5,
 
   "save_path": "./Result",
 
   "log_interval": 10,
 
-  "device": "cuda",
-  "batch_size": 10,
+  "device": "cpu",
+  "batch_size": 1,
   "epochs": 999,
 
   "path_tuned_D": "f./Result/20250804_155258/ImageNet256/tuned_D/Epoch_034.pth",
@@ -47,12 +47,12 @@
 
   "patience": 50,
 
-  "image_size": 128,
-  "generator_input_dim": 64,
+  "image_size": 256,
+  "generator_input_dim": 128,
 
   "dataset": {
     "name": "ImageNet256",
-    "path": "~/torch/data/ImageNet256",
+    "path": "/Users/timschafer/Documents/Masterstudium/1. Semester/F&E Projekt/HKA_FEProjekt2025_FeatSegMarks_IccvEDbOA/src/ImageNet256",
     "num_classes": 1000,
     "spare_synsets_1": {
     },

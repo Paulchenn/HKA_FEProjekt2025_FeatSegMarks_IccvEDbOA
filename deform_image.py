@@ -5,7 +5,7 @@ from torchvision import transforms
 from PIL import Image
 
 # Importiere deine Generator-Klasse
-from models.generation import generator
+from models.generation_neu import generator
 
 # Importiere die Funktionen für Edge und Info
 from train_SDbOA_cifar import get_edge, get_info, TPS_Batch

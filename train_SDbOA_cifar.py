@@ -7,7 +7,7 @@ from torchvision import datasets, transforms
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from matplotlib import pyplot as plt
-from models import resnet, generation
+from models import resnet, generation_neu
 from models.resnet import ResNet18, BasicBlock
 from utils.canny import canny
 from skimage.color import rgb2gray

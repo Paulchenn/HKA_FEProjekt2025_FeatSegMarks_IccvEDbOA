@@ -4,12 +4,14 @@ import pdb
 import sys
 import time
 import torch
+from contextlib import nullcontext  # falls du später autocast-Kontexte brauchst
+
 
 import torchvision.models as torch_models
 
 from collections import deque
 from datetime import datetime
-from models import generation
+from models import generation_neu, generation
 from torch import nn, optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
@@ -18,6 +20,16 @@ from tqdm import tqdm
 from utils.modules  import *
 from utils.helpers import *
 
+class NoOpGradScaler:
+    """Drop-in-Ersatz für GradScaler auf MPS/CPU: macht einfach nichts."""
+    def scale(self, loss):
+        return loss
+    def step(self, optimizer):
+        optimizer.step()
+    def update(self):
+        pass
+    def unscale_(self, optimizer):
+        pass
 
 class Tee(object):
     def __init__(self, *files):
@@ -100,29 +112,36 @@ def seconds_to_hhmmss(seconds):
 
         
 
-# Path of the current script
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Path to the config directory
-CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
+def myInit():
+    # Path of the current script
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    # Path to the config directory
+    CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
 
-# === Load parameters for training from config.json ===
-config = get_config(os.path.join(SCRIPT_DIR, 'config/config.json'))
+    # === Load parameters for training from config.json ===
+    config = get_config(os.path.join(SCRIPT_DIR, 'config/config.json'))
+    config.SCRIPT_DIR = SCRIPT_DIR
+    config.CONFIG_DIR = CONFIG_DIR
 
-# create log-directory (if not yet done)
-folder2save_log = os.path.join(config.SAVE_PATH)
-create_saveFolder(folder2save_log)  # Create folder to save log
-path2save_log = os.path.join(folder2save_log, f'log.txt')  # Path to save the log
+    # create log-directory (if not yet done)
+    folder2save_log = os.path.join(config.SAVE_PATH)
+    create_saveFolder(folder2save_log)  # Create folder to save log
+    path2save_log = os.path.join(folder2save_log, f'log.txt')  # Path to save the log
 
-# Log-Datei öffnen und stdout + stderr umlcsv_epochs_output_patheiten
-log_file = open(path2save_log, "w")
-sys.stdout = Tee(sys.__stdout__, log_file)
-sys.stderr = Tee(sys.__stderr__, log_file)
+    # Log-Datei öffnen und stdout + stderr umleiten
+    log_file = open(path2save_log, "w")
+    sys.stdout = Tee(sys.__stdout__, log_file)
+    sys.stderr = Tee(sys.__stderr__, log_file)
 
-# Clear GPU Memory
-if not config.DEVICE.type=="cpu":
-    torch.cuda.empty_cache()
+    # Clear GPU Memory
+    if not config.DEVICE.type=="cpu":
+        torch.cuda.empty_cache()
+
+    return config
+
 
 if __name__ == "__main__":
+    config = myInit()
     # start debugging
     #pdb.set_trace()
 
@@ -195,7 +214,7 @@ if __name__ == "__main__":
 
     # === Initialize networks (and move to CPU/GPU) ===
     netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
-    netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
+    netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE)
     cls     = torch_models.resnet18(weights=cls_weights)
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
     cls     = cls.to(config.DEVICE)
@@ -236,10 +255,11 @@ if __name__ == "__main__":
 
 
     # === Initialize optimizers ===
-    optimD_stage1 = optim.Adam(netD.parameters(), lr=config.LR_D_S1, betas=(0.5, 0.999))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimD_stage2 = optim.Adam(netD.parameters(), lr=config.LR_D_S2, betas=(0.5, 0.999))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimG_stage1 = optim.Adam(netG.parameters(), lr=config.LR_G_S1, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
-    optimG_stage2 = optim.Adam(netG.parameters(), lr=config.LR_G_S2, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
+    # Änderung 1: Betas auf (0.0, 0.9)
+    optimD_stage1 = optim.Adam(netD.parameters(), lr=config.LR_D_S1, betas=(0.0, 0.9))    # Optimizer for Discriminator
+    optimD_stage2 = optim.Adam(netD.parameters(), lr=config.LR_D_S2, betas=(0.0, 0.9))    # Optimizer for Discriminator
+    optimG_stage1 = optim.Adam(netG.parameters(), lr=config.LR_G_S1, betas=(0.0, 0.9))    # Optimizer for Generator
+    optimG_stage2 = optim.Adam(netG.parameters(), lr=config.LR_G_S2, betas=(0.0, 0.9))    # Optimizer for Generator
 
     if os.path.exists(config.PATH_OPTIM_D_S1):
         optimD_stage1.load_state_dict(torch.load(config.PATH_OPTIM_D_S1))
@@ -299,6 +319,12 @@ if __name__ == "__main__":
     L1_loss = nn.L1Loss()                # Absoulte Error (e.g. for Reconstruction)
     CE_loss = nn.CrossEntropyLoss()      # Classification Loss (for multi-class outputs like CIFAR-10 Classes)
 
+    # Änderung 2: GradScaler EINMAL vor den Epochen anlegen
+    # Änderung 2: GradScaler EINMAL vor den Epochen anlegen (CUDA) / No-Op auf MPS/CPU
+    if config.DEVICE.type == "cuda":
+        scaler = torch.cuda.amp.GradScaler()
+    else:
+        scaler = NoOpGradScaler()
 
     # === Create a directory to save the results ===
     folder2save_epochImg = os.path.join(config.SAVE_PATH, config.DATASET_NAME, 'visualization')
@@ -382,8 +408,7 @@ if __name__ == "__main__":
         cls.eval()
 
         # === Initializations ===
-        # Initialize GradScaler for mixed precision training
-        scaler = torch.amp.GradScaler()
+        # Änderung 2: KEIN neuer GradScaler pro Epoche!
         # Initialize time lists
         time_Iteration = []  # Start time for iteration
         time_EMSE = []
@@ -645,7 +670,7 @@ if __name__ == "__main__":
 
                 # calculate average losses
                 total_batches = max(len(val_loader), 1)
-                total_items = total_batches*config.BATCH_SIZE
+                total_items = total_batches * config.BATCH_SIZE  # Änderung 3: int, kein .cpu()
                 avg_D_loss = total_D_loss / total_batches
                 avg_G_loss = total_G_loss / total_batches
                 current_val_loss = avg_G_loss
@@ -673,7 +698,7 @@ if __name__ == "__main__":
                 
                 val_end_time = time.time()
                 val_duration = val_end_time - val_start_time
-                fps = float(total_items.cpu()) / val_duration
+                fps = total_items / val_duration  # Änderung 3: kein .cpu()
                 print(f"Validation Inference Speed: {fps:.0f} FPS")
 
 
@@ -785,3 +810,4 @@ if __name__ == "__main__":
     print(f"===== TRAINING ENDED {datetime.now().strftime('%d.%m.%Y, %H-%M-%S')} =====")
     print(f"====== Complete training time: {seconds_to_hhmmss(time_forTraining)} ======")
     print("===============================================")
+# --- AMP / GradScaler Fallback für Nicht-CUDA (MPS/CPU) ---

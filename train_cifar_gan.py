@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from torch.utils.data import DataLoader, Dataset
 from matplotlib import pyplot as plt
-from models import resnet, generation
+from models import resnet, generation_neu
 from utils.canny import canny
 from skimage.color import rgb2gray
 from utils.tps_grid_gen import TPSGridGen
