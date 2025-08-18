@@ -4,6 +4,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import MultiheadAttention
 
+class BlurPool2x(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        k = torch.tensor([[1,2,1],[2,4,2],[1,2,1]], dtype=torch.float32)
+        k = (k / k.sum()).view(1,1,3,3)
+        self.register_buffer("k", k)
+        self.channels = channels
+    def forward(self, x):
+        w = self.k.expand(self.channels, 1, 3, 3)
+        return F.conv2d(x, w, stride=2, padding=1, groups=self.channels)
+
+
 class generator(nn.Module):
     # initializers
     def __init__(self, d=128, img_size=256):
@@ -34,26 +46,60 @@ class generator(nn.Module):
         self.deconv3_bn = nn.BatchNorm2d(d)
         self.deconv4 = nn.ConvTranspose2d(d*2, 3, 4, 2, 1)    # 128 -> 256
 
-        # Label-Encoder (bis 64x64)
+        # edgeMap-Encoder (bis 64x64)--------------------------------------------------------------
         self.conv1_1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
         self.conv1_2 = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        # 256×256 Block (zusätzlich):
+        self.conv1_3 = nn.Conv2d(32, 32, 3, padding=1)
+        self.conv1_4 = nn.Conv2d(32, 32, 3, padding=1)
         self.maxpool1 = nn.MaxPool2d(kernel_size=2)
+        #self.blurpool1 = BlurPool2x(32)
+
         self.conv2_1 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv2_2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        # 128×128 Block (zusätzlich):
+        self.conv2_3 = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv2_4 = nn.Conv2d(64, 64, 3, padding=1)
         self.maxpool2 = nn.MaxPool2d(kernel_size=2)
-        self.conv3_1 = nn.Conv2d(64, d*2, kernel_size=3, stride=1, padding=1)
+        #self.blurpool2 = BlurPool2x(64)
 
-        # BC-Encoder (spiegelgleich)
+        # 64×64 Head (ersetzen):
+        # vorher: self.conv3_1 = nn.Conv2d(64, d*2, 3, padding=1)
+        self.conv3_1 = nn.Conv2d(64, 128, 3, padding=1)
+        self.conv3_pj = nn.Conv2d(128, d * 2, 1)
+        #------------------------------------------------------------------------------------------
+
+        # blurImg-Encoder (spiegelgleich)----------------------------------------------------------
         self.conv1_1col = nn.Conv2d(3, 32, kernel_size=3, padding=1)
         self.conv1_2col = nn.Conv2d(32, 32, kernel_size=3, padding=1)
+        # 256×256 Block (zusätzlich):
+        self.conv1_3col = nn.Conv2d(32, 32, 3, padding=1)
+        self.conv1_4col = nn.Conv2d(32, 32, 3, padding=1)
         self.maxpool1col = nn.MaxPool2d(kernel_size=2)
+        # self.blurpool1col = BlurPool2x(32)
+
         self.conv2_1col = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv2_2col = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        # 128×128 Block (zusätzlich):
+        self.conv2_3col = nn.Conv2d(64, 64, 3, padding=1)
+        self.conv2_4col = nn.Conv2d(64, 64, 3, padding=1)
         self.maxpool2col = nn.MaxPool2d(kernel_size=2)
-        self.conv3_1col = nn.Conv2d(64, d*2, kernel_size=3, stride=1, padding=1)
+        # self.blurpool2col = BlurPool2x(64)
+
+        # 64×64 Head (ersetzen):
+        # vorher: self.conv3_1col = nn.Conv2d(64, d*2, kernel_size=3, stride=1, padding=1)
+        self.conv3_1col = nn.Conv2d(64, 128, 3, padding=1)
+        self.conv3_pjcol = nn.Conv2d(128, d * 2, 1)
+        # ------------------------------------------------------------------------------------------
 
         # Self-Attention auf 128x128 (unverändert)
         self.self_att = MultiheadAttention(embed_dim=d*2, num_heads=4, batch_first=True)
+
+        #neu: zusätzliche Convs auf 128×128 (sichtbare Mehrschärfe/Details, weniger Checkerboard)
+        self.refine128 = nn.Sequential(
+            nn.Conv2d(d * 2, d * 2, 3, padding=1), nn.BatchNorm2d(d * 2), nn.ReLU(True),
+            nn.Conv2d(d * 2, d * 2, 3, padding=1), nn.BatchNorm2d(d * 2), nn.ReLU(True),
+        )
 
     # weight_init
     def weight_init(self, mean, std):
@@ -61,63 +107,61 @@ class generator(nn.Module):
             normal_init(self._modules[m], mean, std)
 
     # forward method
-    def forward(self, input, label, bc):
-        # z -> 64x64
-        x = F.relu(self.deconv1_1_bn(self.deconv1_1(input)))
+    def forward(self, noiseVector, edgeMap, blurImg):
+        x = F.relu(self.deconv1_1_bn(self.deconv1_1(noiseVector)))
 
         #########################################################
-        # label-encoder -> 64x64
-        label = F.relu(self.conv1_1(label))
-        label = F.relu(self.conv1_2(label))
-        label = self.maxpool1(label)
-        label = F.relu(self.conv2_1(label))
-        label = F.relu(self.conv2_2(label))
-        label = self.maxpool2(label)
-        y = F.relu(self.conv3_1(label))
+        # edgeMap-encoder -> 64x64
+        edgeMap = F.relu(self.conv1_1(edgeMap))
+        edgeMap = F.relu(self.conv1_2(edgeMap))
+        edgeMap = F.relu(self.conv1_3(edgeMap))  # neu
+        edgeMap = F.relu(self.conv1_4(edgeMap))  # neu
+        edgeMap = self.maxpool1(edgeMap)  # 256 -> 128
+        #edgeMap = self.blurpool1(edgeMap)
 
-        # bc-encoder -> 64x64
-        bc = F.relu(self.conv1_1col(bc))
-        bc = F.relu(self.conv1_2col(bc))
-        bc = self.maxpool1col(bc)
-        bc = F.relu(self.conv2_1col(bc))
-        bc = F.relu(self.conv2_2col(bc))
-        bc = self.maxpool2col(bc)
-        yc = F.relu(self.conv3_1col(bc))
+        edgeMap = F.relu(self.conv2_1(edgeMap))
+        edgeMap = F.relu(self.conv2_2(edgeMap))
+        edgeMap = F.relu(self.conv2_3(edgeMap))  # neu
+        edgeMap = F.relu(self.conv2_4(edgeMap))  # neu
+        edgeMap = self.maxpool2(edgeMap)  # 128 -> 64
+        #edgeMap = self.blurpool2(edgeMap)
+
+        edgeMap = F.relu(self.conv3_1(edgeMap))  # 64 -> 128
+        y = F.relu(self.conv3_pj(edgeMap))  # 128 -> 256
+
+        # blurImg-encoder -> 64x64
+        blurImg = F.relu(self.conv1_1col(blurImg))
+        blurImg = F.relu(self.conv1_2col(blurImg))
+        blurImg = F.relu(self.conv1_3col(blurImg))  # neu
+        blurImg = F.relu(self.conv1_4col(blurImg))  # neu
+        blurImg = self.maxpool1col(blurImg)
+        #blurImg = self.blurpool1col(blurImg)
+
+        blurImg = F.relu(self.conv2_1col(blurImg))
+        blurImg = F.relu(self.conv2_2col(blurImg))
+        blurImg = F.relu(self.conv2_3col(blurImg))  # neu
+        blurImg = F.relu(self.conv2_4col(blurImg))  # neu
+        blurImg = self.maxpool2col(blurImg)
+        #blurImg = self.blurpool2col(blurImg)
+
+        blurImg = F.relu(self.conv3_1col(blurImg))  # 64 -> 128
+        yc = F.relu(self.conv3_pjcol(blurImg))  # 128 -> 256
 
         #########################################################
         try:
             x = torch.cat([x, y, yc], 1)  # [B, d*6, 64, 64]
         except RuntimeError as e:
             print(f"RuntimeError: {e}")
-            print(f"input size: {input.shape}")
-            print(f"label size: {label.shape}")
-            print(f"bc size: {bc.shape}")
-
-            min_batch_size = min(input.shape[0], label.shape[0], bc.shape[0])
-            input = input[:min_batch_size]
-            label = label[:min_batch_size]
-            bc = bc[:min_batch_size]
-
-            print(f"x batch size: {x.shape[0]}, y batch size: {y.shape[0]}, yc batch size: {yc.shape[0]}")
-            min_batch_size = min(x.shape[0], y.shape[0], yc.shape[0])
-            x = x[:min_batch_size]
-            y = y[:min_batch_size]
-            yc = yc[:min_batch_size]
-            try:
-                x = torch.cat([x, y, yc], 1)
-            except RuntimeError as e2:
-                print(f"Second RuntimeError: {e2}")
-                print(f"x shape: {x.shape}")
-                print(f"y shape: {y.shape}")
-                print(f"yc shape: {yc.shape}")
-                raise e2
 
         # *** MINIMALE MEHR-TIEFE auf 64x64 (ohne Shape-Änderung) ***
         x = self.refine1(x)
-        x = self.refine2(x)
+        # x = self.refine2(x)   # --> (maybe) not needed anymore because of new layers before concatentate
 
         # 64 -> 128
         x = F.relu(self.deconv2_bn(self.deconv2(x)))   # [B, d*2, 128, 128]
+
+        #neu
+        #x = self.refine128(x)  # mehr Tiefe auf 128
 
         # Self-Attention auf 128x128
         B, C, H, W = x.shape
