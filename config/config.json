@@ -1,11 +1,11 @@
 {
-  "debug_mode": false,
+  "debug_mode": true,
   "debugIterations_strt": 0,
-  "debugIterations_amount": 40,
+  "debugIterations_amount": 5,
 
   "show_imgEmseTsd": false,
-  "show_tsg": false,
-  "show_images_interval": 100,
+  "show_tsg": true,
+  "show_images_interval": 10,
 
   "save_path": "./Result",
 
@@ -24,7 +24,7 @@
 
   "train_with_cls": true,
 
-  "downSize": 64,
+  "downSize": 128,
 
   "learning_rate": {
     "discriminator_stage1": 1e-4,
@@ -45,15 +45,14 @@
     "lambda_stage2_edge": 1.0
   },
 
-  "patience": 50,
+  "patience": 20,
 
-  "image_size": 128,
-  "generator_input_dim": 64,
+  "image_size": 256,
+  "generator_input_dim": 128,
 
   "dataset": {
     "name": "ImageNet256",
     "path": "~/torch/data/ImageNet256",
-    "num_classes": 1000,
     "spare_synsets_1": {
     },
     "SELECTED_SYNSETS": {
@@ -66,7 +65,9 @@
       "6": "airship",
       "7": "alp",
       "8": "altar",
-      "9": "ambulance",
+      "9": "ambulance"
+    },
+    "spare_synsets_2": {
       "10": "analog_clock",
       "11": "apron",
       "12": "artichoke",
@@ -96,9 +97,7 @@
       "36": "beer_bottle",
       "37": "beer_glass",
       "38": "bell_pepper",
-      "39": "bib"
-    },
-    "spare_synsets_2": {
+      "39": "bib",
       "40": "bicycle_built_for_two",
       "41": "binder",
       "42": "binoculars",

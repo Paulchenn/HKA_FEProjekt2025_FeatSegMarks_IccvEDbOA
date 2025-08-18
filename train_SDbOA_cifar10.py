@@ -9,7 +9,7 @@ import torchvision.models as torch_models
 
 from collections import deque
 from datetime import datetime
-from models import generation
+from code.SDbOA.models import generation_cifar10
 from torch import nn, optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
@@ -190,8 +190,8 @@ if __name__ == "__main__":
     
 
     # === Initialize networks (and move to CPU/GPU) ===
-    netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
-    netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
+    netG    = generation_cifar10.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
+    netD    = generation_cifar10.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
     cls     = torch_models.resnet18(weights=cls_weights)
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
     cls     = cls.to(config.DEVICE)

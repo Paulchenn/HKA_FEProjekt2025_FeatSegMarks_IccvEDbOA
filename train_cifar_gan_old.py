@@ -1,3 +1,4 @@
+from code.SDbOA.models import generation_cifar10
 import numpy as np
 import os
 import torch
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 
 from torch.utils.data import DataLoader, Dataset
 from matplotlib import pyplot as plt
-from models import resnet, generation
+from models import resnet
 from utils.canny import canny
 from skimage.color import rgb2gray
 from utils.tps_grid_gen import TPSGridGen
@@ -151,8 +152,8 @@ device = torch.device('cuda')
 re12 = transforms.Resize((12, 12))
 re32 = transforms.Resize((32, 32))
 
-netG = generation.generator(128)
-netD = generation.Discriminator()
+netG = generation_cifar10.generator(128)
+netD = generation_cifar10.Discriminator()
 netG.cuda()
 netD.cuda()
 

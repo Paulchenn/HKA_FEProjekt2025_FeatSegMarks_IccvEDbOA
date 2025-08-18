@@ -9,7 +9,7 @@ import torchvision.models as torch_models
 
 from collections import deque
 from datetime import datetime
-from models import generation
+from models import generation_imageNet
 from torch import nn, optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
@@ -99,30 +99,36 @@ def seconds_to_hhmmss(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
         
+def myInit():
+    # Path of the current script
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    # Path to the config directory
+    CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
 
-# Path of the current script
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Path to the config directory
-CONFIG_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), 'config')
+    # === Load parameters for training from config.json ===
+    config = get_config(os.path.join(SCRIPT_DIR, 'config/config.json'))
+    config.SCRIPT_DIR = SCRIPT_DIR
+    config.CONFIG_DIR = CONFIG_DIR
 
-# === Load parameters for training from config.json ===
-config = get_config(os.path.join(SCRIPT_DIR, 'config/config.json'))
+    # create log-directory (if not yet done)
+    folder2save_log = os.path.join(config.SAVE_PATH)
+    create_saveFolder(folder2save_log)  # Create folder to save log
+    path2save_log = os.path.join(folder2save_log, f'log.txt')  # Path to save the log
 
-# create log-directory (if not yet done)
-folder2save_log = os.path.join(config.SAVE_PATH)
-create_saveFolder(folder2save_log)  # Create folder to save log
-path2save_log = os.path.join(folder2save_log, f'log.txt')  # Path to save the log
+    # Log-Datei öffnen und stdout + stderr umlcsv_epochs_output_patheiten
+    log_file = open(path2save_log, "w")
+    sys.stdout = Tee(sys.__stdout__, log_file)
+    sys.stderr = Tee(sys.__stderr__, log_file)
 
-# Log-Datei öffnen und stdout + stderr umlcsv_epochs_output_patheiten
-log_file = open(path2save_log, "w")
-sys.stdout = Tee(sys.__stdout__, log_file)
-sys.stderr = Tee(sys.__stderr__, log_file)
+    # Clear GPU Memory
+    if not config.DEVICE.type=="cpu":
+        torch.cuda.empty_cache()
 
-# Clear GPU Memory
-if not config.DEVICE.type=="cpu":
-    torch.cuda.empty_cache()
+    return config
+
 
 if __name__ == "__main__":
+    config = myInit()
     # start debugging
     #pdb.set_trace()
 
@@ -170,15 +176,6 @@ if __name__ == "__main__":
 
 
     # === Load the dataset (ImageNet) ===
-    cwd = os.getcwd()   # current working directory
-    root = os.path.join(
-        os.path.dirname(
-            os.path.dirname(cwd)
-        ),
-        "data",
-        config.DATASET_NAME
-    )
-    root = os.path.join(cwd, "src", config.DATASET_NAME)
     root = config.DATASET_PATH
     print(f"Root directory for ImageNet 256: {root}")
     train_loader, val_loader = get_train_val_loaders(
@@ -194,8 +191,8 @@ if __name__ == "__main__":
     
 
     # === Initialize networks (and move to CPU/GPU) ===
-    netG    = generation.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
-    netD    = generation.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
+    netG    = generation_imageNet.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
+    netD    = generation_imageNet.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
     cls     = torch_models.resnet18(weights=cls_weights)
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
     cls     = cls.to(config.DEVICE)
@@ -546,10 +543,6 @@ if __name__ == "__main__":
         # Fuer FPS-Messung: Startzeit erfassen
         val_start_time = time.time()
 
-        netG.eval()
-        netD.eval()
-        cls.eval()
-
         # Counter for correct predictions and total predictions
         correct = torch.zeros(1).squeeze().to(config.DEVICE, non_blocking=True)
 
@@ -560,210 +553,209 @@ if __name__ == "__main__":
         acc = 0.0
 
         # Only validate every N epochs
-        if epoch % 1 == 0:
-            print("")
-            print("=====================================")
-            print(f"=== Validating at Epoch {epoch+1:0{num_digits}d} / {config.EPOCHS} ===")
-            print(f"======== currently in STAGE {training_stage} =======")
-            print("=====================================")
-            with torch.no_grad():
-                pbar = tqdm(enumerate(val_loader), total=len(val_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True, file=sys.__stderr__, ncols=100)
-                for i, (img, label) in pbar:
-                    time_startValIteration = time.time()
+        print("")
+        print("=====================================")
+        print(f"=== Validating at Epoch {epoch+1:0{num_digits}d} / {config.EPOCHS} ===")
+        print(f"======== currently in STAGE {training_stage} =======")
+        print("=====================================")
+        
+        pbar = tqdm(enumerate(val_loader), total=len(val_loader), desc=f"Epoch {epoch+1}", dynamic_ncols=True, file=sys.__stderr__, ncols=100)
+        for i, (img, label) in pbar:
+            time_startValIteration = time.time()
 
-                    # For Debugging
-                    if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
-                        continue
+            # For Debugging
+            if config.DEBUG_MODE and i < config.DEBUG_ITERS_START:
+                continue
 
-                    img     = img.to(config.DEVICE)
-                    label   = label.to(config.DEVICE)
+            img     = img.to(config.DEVICE)
+            label   = label.to(config.DEVICE)
 
-                    # === EMSE >>>
-                    time_startEmse = time.time()
-                    edgeMap = emse.doEMSE(img)
-                    time_emse = time.time()-time_startEmse
-                    # <<< EMSE ===
+            # === EMSE >>>
+            time_startEmse = time.time()
+            edgeMap = emse.doEMSE(img)
+            time_emse = time.time()-time_startEmse
+            # <<< EMSE ===
 
-                    # === TSD >>>
-                    time_startTsd = time.time()
-                    deformedImg = tsd.doTSD(edgeMap)
-                    time_tsd = time.time() - time_startTsd
-                    # <<< TSD ===
+            # === TSD >>>
+            time_startTsd = time.time()
+            deformedImg = tsd.doTSD(edgeMap)
+            time_tsd = time.time() - time_startTsd
+            # <<< TSD ===
 
-                    # === Generation and Classification >>>
-                    time_startTsg = time.time()
-                    if training_stage==1:
-                        loss = tsg.doTSG_stage1_testing(
-                            config=config,
-                            img=img,
-                            label=label,
-                            e_extend=edgeMap,
-                            netD=netD,
-                            netG=netG,
-                            CE_loss=CE_loss,
-                            L1_loss=L1_loss
-                        )
-                    else:
-                        loss, cls_prediction = tsg.doTSG_stage2_testing(
-                            config=config,
-                            emse=emse,
-                            img=img,
-                            label=label,
-                            e_deformed=deformedImg,
-                            netD=netD,
-                            netG=netG,
-                            cls=cls,
-                            transform_cls=transform_cls,
-                            CE_loss=CE_loss,
-                            L1_loss=L1_loss
-                        )
-                        # Count correct predictions and total predictions to calculate accuracy
-                        correct += (cls_prediction == label).sum().float()
-                    time_tsg = time.time() - time_startTsg
-                    # <<< Generation and Classification ===
+            # === Generation and Classification >>>
+            time_startTsg = time.time()
+            if training_stage==1:
+                loss = tsg.doTSG_stage1_testing(
+                    config=config,
+                    img=img,
+                    label=label,
+                    e_extend=edgeMap,
+                    netD=netD,
+                    netG=netG,
+                    CE_loss=CE_loss,
+                    L1_loss=L1_loss
+                )
+            else:
+                loss, cls_prediction = tsg.doTSG_stage2_testing(
+                    config=config,
+                    emse=emse,
+                    img=img,
+                    label=label,
+                    e_deformed=deformedImg,
+                    netD=netD,
+                    netG=netG,
+                    cls=cls,
+                    transform_cls=transform_cls,
+                    CE_loss=CE_loss,
+                    L1_loss=L1_loss
+                )
+                # Count correct predictions and total predictions to calculate accuracy
+                correct += (cls_prediction == label).sum().float()
+            time_tsg = time.time() - time_startTsg
+            # <<< Generation and Classification ===
 
-                    total_D_loss += loss.D_loss.item()
-                    total_G_loss += loss.G_loss.item()
-                    if config.TRAIN_WITH_CLS and training_stage==2:
-                        total_cls_loss += loss.cls_loss.item()
+            total_D_loss += loss.D_loss.item()
+            total_G_loss += loss.G_loss.item()
+            if config.TRAIN_WITH_CLS and training_stage==2:
+                total_cls_loss += loss.cls_loss.item()
 
-                    time_valIteration = time.time() - time_startValIteration
+            time_valIteration = time.time() - time_startValIteration
 
-                    pbar.set_postfix({
-                        "Iter": f"{time_valIteration:.2f}s",
-                        "EMSE": f"{time_emse:.2f}s",
-                        "TSD": f"{time_tsd:.2f}s",
-                        "TSG": f"{time_tsg:.2f}s",
-                        "D": f"{loss.D_loss.item():.2f}",
-                        f"G{training_stage}": f"{loss.G_loss.item():.2f}",
-                        **({"Cls": f"{loss.cls_loss.item():.2f}"} if config.TRAIN_WITH_CLS and training_stage==2 else {})
-                    })
+            pbar.set_postfix({
+                "Iter": f"{time_valIteration:.2f}s",
+                "EMSE": f"{time_emse:.2f}s",
+                "TSD": f"{time_tsd:.2f}s",
+                "TSG": f"{time_tsg:.2f}s",
+                "D": f"{loss.D_loss.item():.2f}",
+                f"G{training_stage}": f"{loss.G_loss.item():.2f}",
+                **({"Cls": f"{loss.cls_loss.item():.2f}"} if config.TRAIN_WITH_CLS and training_stage==2 else {})
+            })
 
-                    # For debuging (Training of even one Epoch takes very long)
-                    if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START+config.DEBUG_ITERS_AMOUNT:
-                        break
+            # For debuging (Training of even one Epoch takes very long)
+            if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START+config.DEBUG_ITERS_AMOUNT:
+                break
 
-                # calculate average losses
-                total_batches = max(len(val_loader), 1)
-                total_items = total_batches*config.BATCH_SIZE
-                avg_D_loss = total_D_loss / total_batches
-                avg_G_loss = total_G_loss / total_batches
-                current_val_loss = avg_G_loss
-                if training_stage==2:
-                    avg_cls_loss = total_cls_loss / total_batches
-                    acc = (correct / total_items).cpu().detach().data.numpy()
+        # calculate average losses
+        total_batches = max(len(val_loader), 1)
+        total_items = total_batches*config.BATCH_SIZE
+        avg_D_loss = total_D_loss / total_batches
+        avg_G_loss = total_G_loss / total_batches
+        current_val_loss = avg_G_loss
+        if training_stage==2:
+            avg_cls_loss = total_cls_loss / total_batches
+            acc = (correct / total_items).cpu().detach().data.numpy()
 
-                # Print results
-                lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
-                lamda_GAN = config.LAMBDA_S2_GAN # original: 1.0
-                lambda_CE = config.LAMBDA_S2_CE # original: 0.5
-                lambda_cls = config.LAMBDA_S2_CLS # original: 1.0
-                lambda_edge = config.LAMBDA_S2_EDGE # original: 1.0
+        # Print results
+        lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
+        lamda_GAN = config.LAMBDA_S2_GAN # original: 1.0
+        lambda_CE = config.LAMBDA_S2_CE # original: 0.5
+        lambda_cls = config.LAMBDA_S2_CLS # original: 1.0
+        lambda_edge = config.LAMBDA_S2_EDGE # original: 1.0
+        if training_stage==1:
+            print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+0.5*D_celoss = {avg_D_loss:.4f}")
+            print(f"Generator loss:     {config.LAMBDA_S1_L1}*G_L1_loss_rough-{config.LAMBDA_S1_GAN}*D_result_roughImg+{config.LAMBDA_S1_CE}*G_celoss_rough = {avg_G_loss:.4f}")
+        else:
+            print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+0.5*D_celoss = {avg_D_loss:.4f}")
+            if config.TRAIN_WITH_CLS and training_stage==2:
+                print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_CLS}*cls_loss+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
+                print(f"Classifier loss: {avg_cls_loss:.4f}")
+                print(f"Accuracy: correct/total = {correct}/{total_items} = {acc}")
+            else:
+                print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
+        
+        val_end_time = time.time()
+        val_duration = val_end_time - val_start_time
+        fps = float(total_items) / val_duration
+        print(f"Validation Inference Speed: {fps:.0f} FPS")
+
+
+        # === save metrics of this epoch ===
+        epoch_metric = {
+            "epoch": epoch + 1,
+            "stage": training_stage,
+            "accuracy": float(acc) if training_stage==2 else None,
+            "discriminator_loss": float(avg_D_loss),
+            "generator_loss": float(avg_G_loss),
+            "classifier_loss": float(avg_cls_loss) if config.TRAIN_WITH_CLS and training_stage==2 else None,
+            "FPS": round(fps, 2),
+            "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
+            "MMA@3": None,
+            "HomographyAcc": None
+        }
+        epoch_metrics.append(epoch_metric)
+
+
+        # === Write all metrics as csv-file ===
+        csv_fields = epoch_metrics[0].keys() if epoch_metrics else []
+
+        with open(csv_epochs_output_path, mode='w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
+            writer.writeheader()
+            writer.writerows(epoch_metrics)
+
+
+        # === Early stopping / Early switching to stage 2 ===
+        # Calculate current validiation loss
+        print(f"Total batches: {total_batches}")
+        print(f"Total items: {total_items}")
+        if best_val_loss != None:
+            if current_val_loss <= best_val_loss:
+                best_val_loss = current_val_loss
+                netD_best = netD
+                netG_best = netG
                 if training_stage==1:
-                    print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+0.5*D_celoss = {avg_D_loss:.4f}")
-                    print(f"Generator loss:     {config.LAMBDA_S1_L1}*G_L1_loss_rough-{config.LAMBDA_S1_GAN}*D_result_roughImg+{config.LAMBDA_S1_CE}*G_celoss_rough = {avg_G_loss:.4f}")
+                    optimD_best = optimD_stage1
+                    optimG_best = optimG_stage1
                 else:
-                    print(f"Discriminator loss: (-D_result_realImg+D_result_roughImg)+0.5*D_celoss = {avg_D_loss:.4f}")
-                    if config.TRAIN_WITH_CLS and training_stage==2:
-                        print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_CLS}*cls_loss+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
-                        print(f"Classifier loss: {avg_cls_loss:.4f}")
-                        print(f"Accuracy: correct/total = {correct}/{total_items} = {acc}")
-                    else:
-                        print(f"Generator loss: {config.LAMBDA_S2_L1}*G_L1_loss_fine-{config.LAMBDA_S2_GAN}*D_result_fineImg+{config.LAMBDA_S2_CE}*G_celoss_fine+{config.LAMBDA_S2_EDGE}*edge_loss = {avg_G_loss:.4f}")
-                
-                val_end_time = time.time()
-                val_duration = val_end_time - val_start_time
-                fps = float(total_items.cpu()) / val_duration
-                print(f"Validation Inference Speed: {fps:.0f} FPS")
-
-
-                # === save metrics of this epoch ===
-                epoch_metric = {
-                    "epoch": epoch + 1,
-                    "stage": training_stage,
-                    "accuracy": float(acc) if training_stage==2 else None,
-                    "discriminator_loss": float(avg_D_loss),
-                    "generator_loss": float(avg_G_loss),
-                    "classifier_loss": float(avg_cls_loss) if config.TRAIN_WITH_CLS and training_stage==2 else None,
-                    "FPS": round(fps, 2),
-                    "AUC@5": None,  # Platzhalter – spaeter in Evaluation ersetzen
-                    "MMA@3": None,
-                    "HomographyAcc": None
-                }
-                epoch_metrics.append(epoch_metric)
-
-
-                # === Write all metrics as csv-file ===
-                csv_fields = epoch_metrics[0].keys() if epoch_metrics else []
-
-                with open(csv_epochs_output_path, mode='w', newline='') as csvfile:
-                    writer = csv.DictWriter(csvfile, fieldnames=csv_fields)
-                    writer.writeheader()
-                    writer.writerows(epoch_metrics)
-
-
-                # === Early stopping / Early switching to stage 2 ===
-                # Calculate current validiation loss
-                print(f"Total batches: {total_batches}")
-                print(f"Total items: {total_items}")
-                if best_val_loss != None:
-                    if current_val_loss <= best_val_loss:
-                        best_val_loss = current_val_loss
-                        netD_best = netD
-                        netG_best = netG
-                        if training_stage==1:
-                            optimD_best = optimD_stage1
-                            optimG_best = optimG_stage1
-                        else:
-                            optimD_best = optimD_stage2
-                            optimG_best = optimG_stage2
+                    optimD_best = optimD_stage2
+                    optimG_best = optimG_stage2
+                counter_noBetterValLoss = 0
+            else:
+                counter_noBetterValLoss += 1
+                if counter_noBetterValLoss >= config.PATIENCE:
+                    # Save the best models
+                    export_weights(
+                        config=config,
+                        training_stage=training_stage,
+                        state='best',
+                        epoch=epoch,
+                        netD=netD_best,
+                        optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                        optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                        netG=netG_best,
+                        optimG_s1=optimG_best,
+                        optimG_s2=optimG_best
+                    )
+                    if training_stage==1:
+                        training_stage = 2
+                        netD = netD_best
+                        netG = netG_best
+                        best_val_loss = None
                         counter_noBetterValLoss = 0
                     else:
-                        counter_noBetterValLoss += 1
-                        if counter_noBetterValLoss >= config.PATIENCE:
-                            # Save the best models
-                            export_weights(
-                                config=config,
-                                training_stage=training_stage,
-                                state='best',
-                                epoch=epoch,
-                                netD=netD_best,
-                                optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
-                                optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
-                                netG=netG_best,
-                                optimG_s1=optimG_best,
-                                optimG_s2=optimG_best
-                            )
-                            if training_stage==1:
-                                training_stage = 2
-                                netD = netD_best
-                                netG = netG_best
-                                best_val_loss = None
-                                counter_noBetterValLoss = 0
-                            else:
-                                print(f"counter for no better val loss = {counter_noBetterValLoss}")
-                                if current_val_loss:
-                                    print(f"last current val loss = avg_G_loss = {current_val_loss:.4f}")
-                                if best_val_loss:
-                                    print(f"last best val loss = avg_G_loss = {best_val_loss:.4f}")
-                                break
-                else:
-                    best_val_loss = current_val_loss
-                    netD_best = netD
-                    netG_best = netG
-                    if training_stage==1:
-                        optimD_best = optimD_stage1
-                        optimG_best = optimG_stage1
-                    else:
-                        optimD_best = optimD_stage2
-                        optimG_best = optimG_stage2
-                    counter_noBetterValLoss = 0
+                        print(f"counter for no better val loss = {counter_noBetterValLoss}")
+                        if current_val_loss:
+                            print(f"last current val loss = avg_G_loss = {current_val_loss:.4f}")
+                        if best_val_loss:
+                            print(f"last best val loss = avg_G_loss = {best_val_loss:.4f}")
+                        break
+        else:
+            best_val_loss = current_val_loss
+            netD_best = netD
+            netG_best = netG
+            if training_stage==1:
+                optimD_best = optimD_stage1
+                optimG_best = optimG_stage1
+            else:
+                optimD_best = optimD_stage2
+                optimG_best = optimG_stage2
+            counter_noBetterValLoss = 0
 
-                print(f"counter for no better val loss = {counter_noBetterValLoss}")
-                if current_val_loss:
-                    print(f"current val loss = avg_G_loss = {current_val_loss:.4f}")
-                if best_val_loss:
-                    print(f"best val loss = avg_G_loss = {best_val_loss:.4f}")
+        print(f"counter for no better val loss = {counter_noBetterValLoss}")
+        if current_val_loss:
+            print(f"current val loss = avg_G_loss = {current_val_loss:.4f}")
+        if best_val_loss:
+            print(f"best val loss = avg_G_loss = {best_val_loss:.4f}")
 
         ### === END OF VALIDATION === ###
 

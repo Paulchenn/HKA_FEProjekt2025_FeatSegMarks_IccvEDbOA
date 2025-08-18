@@ -5,8 +5,8 @@ import pdb
 
 # === CONFIG ===
 #print(os.getcwd())
-train_csv_path = "./Result/20250811_102612/metrics/iterations_metrics.csv"  # Pfad zur Trainings-CSV
-val_csv_path = "./Result/20250811_102612/metrics/epoch_metrics.csv"      # Pfad zur Validierungs-CSV
+train_csv_path = "./Result/20250818_134335/metrics/iterations_metrics.csv"  # Pfad zur Trainings-CSV
+val_csv_path = "./Result/20250818_134335/metrics/epoch_metrics.csv"      # Pfad zur Validierungs-CSV
 refresh_interval = 1  # Sekunden zwischen den Updates
 
 # === Funktionen ===
@@ -52,7 +52,7 @@ def plot_gan_logs(axs):
 
         N = max(iteration) if iteration else 1000
         smooth_window = 50
-        global_iter = [e * N + i for e, i in zip(epoch, iteration)]
+        global_iter = [(e-1) * N + i for e, i in zip(epoch, iteration)]
         d_loss_smooth = moving_average(d_loss_raw, smooth_window)
         g_loss_smooth = moving_average(g_loss_raw, smooth_window)
 

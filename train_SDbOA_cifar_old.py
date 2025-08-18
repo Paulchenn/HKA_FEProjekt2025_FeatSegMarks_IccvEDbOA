@@ -1,4 +1,5 @@
 import json
+from code.SDbOA.models import generation_cifar10
 import numpy as np
 import os
 import torch
@@ -7,7 +8,7 @@ from torchvision import datasets, transforms
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from matplotlib import pyplot as plt
-from models import resnet, generation
+from models import resnet
 from models.resnet import ResNet18, BasicBlock
 from utils.canny import canny
 from skimage.color import rgb2gray
@@ -213,8 +214,8 @@ if __name__ == "__main__":
     re32 = transforms.Resize((32, 32))  # Skaliert Bilder auf 32x32 (Originalgröße CIFAR-10)
 
     # --- Netzwerke initialisieren ---
-    netG = generation.generator(128)   # Generator-Netzwerk mit Eingabegröße 128 (vermutlich latenter Vektor)
-    netD = generation.Discriminator()  # Diskriminator zur Unterscheidung von real/fake Bildern
+    netG = generation_cifar10.generator(128)   # Generator-Netzwerk mit Eingabegröße 128 (vermutlich latenter Vektor)
+    netD = generation_cifar10.Discriminator()  # Diskriminator zur Unterscheidung von real/fake Bildern
     cls = ResNet18(BasicBlock, num_classes=10)            # Klassifikator (hier: ResNet-18)
 
     # Netzwerke auf GPU/CPU verschieben
