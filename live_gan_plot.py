@@ -5,8 +5,8 @@ import pdb
 
 # === CONFIG ===
 #print(os.getcwd())
-train_csv_path = "./Result/20250818_134335/metrics/iterations_metrics.csv"  # Pfad zur Trainings-CSV
-val_csv_path = "./Result/20250818_134335/metrics/epoch_metrics.csv"      # Pfad zur Validierungs-CSV
+train_csv_path = "./Result/20250819_111333/metrics/iterations_metrics.csv"  # Pfad zur Trainings-CSV
+val_csv_path = "./Result/20250819_111333/metrics/epoch_metrics.csv"      # Pfad zur Validierungs-CSV
 refresh_interval = 1  # Sekunden zwischen den Updates
 
 # === Funktionen ===
