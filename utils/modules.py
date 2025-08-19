@@ -274,7 +274,7 @@ class TSG:
         # === Stage 1: Step 2: Discriminator training with rough image ===
         time_startTrainD = time.time()
 
-        with nullcontext():
+        with autocast_ctx:
             # Generate rough image
             #print(f"Got input: {mn_batch}, {e_extend.shape} and {img_blur.shape}")
 
@@ -380,7 +380,7 @@ class TSG:
         # === Stage 2: Step 2: Discriminator training with fine image ===
         time_startTrainD = time.time()
 
-        with nullcontext():
+        with autocast_ctx:
             # Generate fine image
             G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)  # Input: edge deformed + blurred image
 
@@ -490,6 +490,7 @@ class TSG:
 
             # === Stage 1: Step 0: Preparations
             # pdb.set_trace()
+            autocast_ctx = amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
             loss = SimpleNamespace()
             mn_batch = img.shape[0]
 
@@ -497,47 +498,39 @@ class TSG:
             # === Stage 1: Step 1: Precompute blurred texture map Itxt ===
             img_blur = blur_image(img, config.DOWN_SIZE)  # corresponds to Itxt in the paper
 
-            # ↓↓↓ NEU: Autocast im Inferenzpfad
-            autocast_ctx = torch.amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
+            # === Stage 1: Step 2: Discriminator validation ===
             with autocast_ctx:
-                G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)
+                # Generate rough image from extended edge map and blurred image
+                #print(f"Got input: {mn_batch}, {e_extend.shape} and {img_blur.shape}")
+                G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
                 G_rough = G_rough.contiguous()
+
+                # Discriminator output on real and fake
                 D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
                 D_result_realImg = D_result_realImg.mean()
                 D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
                 D_result_roughImg = D_result_roughImg.mean()
 
-            # # === Stage 1: Step 2: Discriminator validation ===
-            # # Generate rough image from extended edge map and blurred image
-            # #print(f"Got input: {mn_batch}, {e_extend.shape} and {img_blur.shape}")
-            # G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
-            # G_rough = G_rough.contiguous()
-
-            # # Discriminator output on real and fake
-            # D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-            # D_result_realImg = D_result_realImg.mean()
-            # D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
-            # D_result_roughImg = D_result_roughImg.mean()
-
-            # === Validate Discriminator ===
-            D_celoss = CE_loss(aux_output_realImg, label)
-            loss.D_loss = -D_result_realImg + D_result_roughImg + 0.5 * D_celoss
+                # === Validate Discriminator ===
+                D_celoss = CE_loss(aux_output_realImg, label)
+                loss.D_loss = -D_result_realImg + D_result_roughImg + 0.5 * D_celoss
 
 
             # === Stage 2: Step 3: Generator validation ===
-            img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-            G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
-            G_celoss_rough = CE_loss(aux_output_roughImg, label).sum()
+            with autocast_ctx:
+                img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+                G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
+                G_celoss_rough = CE_loss(aux_output_roughImg, label).sum()
 
-            # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
-            lambda_L1 = config.LAMBDA_S1_L1 # original: 1.0
-            lamda_GAN = config.LAMBDA_S1_GAN # original: 1.0
-            lambda_CE = config.LAMBDA_S1_CE # original: 0.5
-            loss.G_loss = (
-                lambda_L1 * G_L1_loss_rough
-                - lamda_GAN * D_result_roughImg
-                + lambda_CE * G_celoss_rough
-            )
+                # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
+                lambda_L1 = config.LAMBDA_S1_L1 # original: 1.0
+                lamda_GAN = config.LAMBDA_S1_GAN # original: 1.0
+                lambda_CE = config.LAMBDA_S1_CE # original: 0.5
+                loss.G_loss = (
+                    lambda_L1 * G_L1_loss_rough
+                    - lamda_GAN * D_result_roughImg
+                    + lambda_CE * G_celoss_rough
+                )
 
             return loss
     
@@ -566,6 +559,7 @@ class TSG:
 
             # === Stage 2: Step 0: Preparations ===
             # pdb.set_trace()
+            autocast_ctx = amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
             loss = SimpleNamespace()
             mn_batch = img.shape[0]
 
@@ -575,52 +569,54 @@ class TSG:
 
 
             # === Stage 2: Step 2: Discriminator validation with fine image ===
-            # Generate fine image from deformed edge map
-            G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
-            G_fine = G_fine.contiguous()
+            with autocast_ctx:
+                # Generate fine image from deformed edge map
+                G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
+                G_fine = G_fine.contiguous()
 
-            # Discriminator output on real and fake
-            D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-            D_result_realImg = D_result_realImg.mean()
-            D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
-            D_result_fineImg = D_result_fineImg.mean()
+                # Discriminator output on real and fake
+                D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+                D_result_realImg = D_result_realImg.mean()
+                D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
+                D_result_fineImg = D_result_fineImg.mean()
 
-            # === Validate Discriminator ===
-            D_celoss = CE_loss(aux_output_realImg, label)
-            loss.D_loss = -D_result_realImg + D_result_fineImg + 0.5*D_celoss
+                # === Validate Discriminator ===
+                D_celoss = CE_loss(aux_output_realImg, label)
+                loss.D_loss = -D_result_realImg + D_result_fineImg + 0.5*D_celoss
 
 
             # === Stage 2: Step 3: Generator validation with fine image ===
-            # === Classifier Loss ===
-            G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
-            if G_fine_resized.shape[1] == 1:
-                G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
-            G_fine_norm = transform_cls(G_fine_resized)
-            cls_output = cls(G_fine_norm)
-            loss.cls_loss = CE_loss(cls_output, label)
-            cls_prediction = torch.argmax(cls_output, dim=1)
+            with autocast_ctx:
+                # === Classifier Loss ===
+                G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
+                if G_fine_resized.shape[1] == 1:
+                    G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
+                G_fine_norm = transform_cls(G_fine_resized)
+                cls_output = cls(G_fine_norm)
+                loss.cls_loss = CE_loss(cls_output, label)
+                cls_prediction = torch.argmax(cls_output, dim=1)
 
-            # === Edge preservation loss (Ledge) ===
-            emse_G_fine = emse.doEMSE(G_fine.detach())
-            edge_loss_2 = L1_loss(emse_G_fine, e_deformed)
+                # === Edge preservation loss (Ledge) ===
+                emse_G_fine = emse.doEMSE(G_fine.detach())
+                edge_loss_2 = L1_loss(emse_G_fine, e_deformed)
 
-            # === Generator loss ===
-            img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-            G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
-            G_celoss_fine = CE_loss(aux_output_fineImg, label).sum()
+                # === Generator loss ===
+                img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+                G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
+                G_celoss_fine = CE_loss(aux_output_fineImg, label).sum()
 
-            # Total loss = GAN + Classification + Shape-Preservation
-            lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
-            lamda_GAN = config.LAMBDA_S2_GAN # original: 1.0
-            lambda_CE = config.LAMBDA_S2_CE # original: 0.5
-            lambda_cls = config.LAMBDA_S2_CLS # original: 1.0
-            lambda_edge = config.LAMBDA_S2_EDGE # original: 1.0
-            loss.G_loss = (
-                lambda_L1 * G_L1_loss_fine
-                - lamda_GAN * D_result_fineImg
-                + lambda_CE * G_celoss_fine
-                + lambda_cls * loss.cls_loss
-                + lambda_edge * edge_loss_2
-            )
+                # Total loss = GAN + Classification + Shape-Preservation
+                lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
+                lamda_GAN = config.LAMBDA_S2_GAN # original: 1.0
+                lambda_CE = config.LAMBDA_S2_CE # original: 0.5
+                lambda_cls = config.LAMBDA_S2_CLS # original: 1.0
+                lambda_edge = config.LAMBDA_S2_EDGE # original: 1.0
+                loss.G_loss = (
+                    lambda_L1 * G_L1_loss_fine
+                    - lamda_GAN * D_result_fineImg
+                    + lambda_CE * G_celoss_fine
+                    + lambda_cls * loss.cls_loss
+                    + lambda_edge * edge_loss_2
+                )
 
             return loss, cls_prediction
