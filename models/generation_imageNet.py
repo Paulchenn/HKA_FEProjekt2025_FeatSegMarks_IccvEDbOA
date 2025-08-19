@@ -18,8 +18,9 @@ class BlurPool2x(nn.Module):
 
 class generator(nn.Module):
     # initializers
-    def __init__(self, d=128, img_size=256):
+    def __init__(self, d=128, img_size=256, debug=False):
         super(generator, self).__init__()
+        self.myDebug=False
         # z->Featuremap (passt für 256x256: Kernel = img_size/4 = 64 -> 64x64)
         self.deconv1_1 = nn.ConvTranspose2d(100, d*2, int(img_size/4), 1, 0)
         self.deconv1_1_bn = nn.BatchNorm2d(d*2)
@@ -108,7 +109,13 @@ class generator(nn.Module):
 
     # forward method
     def forward(self, noiseVector, edgeMap, blurImg):
+        if self.myDebug:
+            print("Input shapes:")
+            print(f"noiseVector: {noiseVector.shape}, edgeMap: {edgeMap.shape}, blurImg: {blurImg.shape}")
+
         x = F.relu(self.deconv1_1_bn(self.deconv1_1(noiseVector)))
+        if self.myDebug:
+            print(f"After deconv1_1: {x.shape}")
 
         #########################################################
         # edgeMap-encoder -> 64x64
@@ -117,6 +124,8 @@ class generator(nn.Module):
         edgeMap = F.relu(self.conv1_3(edgeMap))  # neu
         edgeMap = F.relu(self.conv1_4(edgeMap))  # neu
         edgeMap = self.maxpool1(edgeMap)  # 256 -> 128
+        if self.myDebug:
+            print(f"After edgeMap block1: {edgeMap.shape}")
         #edgeMap = self.blurpool1(edgeMap)
 
         edgeMap = F.relu(self.conv2_1(edgeMap))
@@ -124,10 +133,14 @@ class generator(nn.Module):
         edgeMap = F.relu(self.conv2_3(edgeMap))  # neu
         edgeMap = F.relu(self.conv2_4(edgeMap))  # neu
         edgeMap = self.maxpool2(edgeMap)  # 128 -> 64
+        if self.myDebug:
+            print(f"After edgeMap block2: {edgeMap.shape}")
         #edgeMap = self.blurpool2(edgeMap)
 
         edgeMap = F.relu(self.conv3_1(edgeMap))  # 64 -> 128
         y = F.relu(self.conv3_pj(edgeMap))  # 128 -> 256
+        if self.myDebug:
+            print(f"EdgeMap head y: {y.shape}")
 
         # blurImg-encoder -> 64x64
         blurImg = F.relu(self.conv1_1col(blurImg))
@@ -135,6 +148,8 @@ class generator(nn.Module):
         blurImg = F.relu(self.conv1_3col(blurImg))  # neu
         blurImg = F.relu(self.conv1_4col(blurImg))  # neu
         blurImg = self.maxpool1col(blurImg)
+        if self.myDebug:
+            print(f"After blurImg block1: {blurImg.shape}")
         #blurImg = self.blurpool1col(blurImg)
 
         blurImg = F.relu(self.conv2_1col(blurImg))
@@ -142,35 +157,69 @@ class generator(nn.Module):
         blurImg = F.relu(self.conv2_3col(blurImg))  # neu
         blurImg = F.relu(self.conv2_4col(blurImg))  # neu
         blurImg = self.maxpool2col(blurImg)
+        if self.myDebug:
+            print(f"After blurImg block2: {blurImg.shape}")
         #blurImg = self.blurpool2col(blurImg)
 
         blurImg = F.relu(self.conv3_1col(blurImg))  # 64 -> 128
         yc = F.relu(self.conv3_pjcol(blurImg))  # 128 -> 256
-
+        if self.myDebug:
+            print(f"BlurImg head yc: {yc.shape}")
         #########################################################
+
+        # Concatenate edgeMap and blurImg heads
         try:
             x = torch.cat([x, y, yc], 1)  # [B, d*6, 64, 64]
+            if self.myDebug:
+                print(f"After concatenate: {x.shape}")
         except RuntimeError as e:
             print(f"RuntimeError: {e}")
+            return
 
         # *** MINIMALE MEHR-TIEFE auf 64x64 (ohne Shape-Änderung) ***
         x = self.refine1(x)
+        if self.myDebug:
+            print(f"After refine1: {x.shape}")
         # x = self.refine2(x)   # --> (maybe) not needed anymore because of new layers before concatentate
 
         # 64 -> 128
         x = F.relu(self.deconv2_bn(self.deconv2(x)))   # [B, d*2, 128, 128]
-
+        if self.myDebug:
+            print(f"After deconv2: {x.shape}")
+        
         #neu
-        #x = self.refine128(x)  # mehr Tiefe auf 128
+        # x = self.refine128(x)  # mehr Tiefe auf 128  --> (maybe) not needed anymore because of new layers before concatentate
 
         # Self-Attention auf 128x128
         B, C, H, W = x.shape
         x_flat = x.view(B, C, -1).permute(0, 2, 1)      # [B, H*W, C]
         x_attended, _ = self.self_att(x_flat, x_flat, x_flat, need_weights=False)
         x = x_attended.permute(0, 2, 1).view(B, C, H, W)
+        if self.myDebug:
+            print(f"After self-attention: {x_attended.shape}")
+
+
+        # ---------------------------------------------------------------------------------
+        # B, C, H, W = x.shape
+        # x_att_in = F.avg_pool2d(x, 2)   # 128 --> 64; tokens 4 times less
+
+        # Hs, Ws = x_att_in.shape[-2:]
+        # x_flat = x_att_in.view(B, C, -1).permute(0, 2, 1)  # [B, Hs*Ws, C]
+        # x_attended, _ = self.self_att(x_flat, x_flat, x_flat, need_weights=False)
+        # x_attended = x_attended.permute(0, 2, 1).view(B, C, Hs, Ws)
+        # if self.myDebug:
+        #     print(f"After self-attention: {x_attended.shape}")
+        
+        # # zurück auf 128×128 für die nächste Stufe
+        # x = F.interpolate(x_attended, size=(H, W), mode='bilinear', align_corners=False)
+        # ---------------------------------------------------------------------------------
+        
 
         # 128 -> 256
         x = torch.tanh(self.deconv4(x))
+        if self.myDebug:
+            print(f"After self-attention: {x_attended.shape}")
+
         return x
 
 class Discriminator(nn.Module):
