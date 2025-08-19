@@ -497,18 +497,27 @@ class TSG:
             # === Stage 1: Step 1: Precompute blurred texture map Itxt ===
             img_blur = blur_image(img, config.DOWN_SIZE)  # corresponds to Itxt in the paper
 
+            # ↓↓↓ NEU: Autocast im Inferenzpfad
+            autocast_ctx = torch.amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
+            with autocast_ctx:
+                G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)
+                G_rough = G_rough.contiguous()
+                D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+                D_result_realImg = D_result_realImg.mean()
+                D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
+                D_result_roughImg = D_result_roughImg.mean()
 
-            # === Stage 1: Step 2: Discriminator validation ===
-            # Generate rough image from extended edge map and blurred image
-            #print(f"Got input: {mn_batch}, {e_extend.shape} and {img_blur.shape}")
-            G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
-            G_rough = G_rough.contiguous()
+            # # === Stage 1: Step 2: Discriminator validation ===
+            # # Generate rough image from extended edge map and blurred image
+            # #print(f"Got input: {mn_batch}, {e_extend.shape} and {img_blur.shape}")
+            # G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
+            # G_rough = G_rough.contiguous()
 
-            # Discriminator output on real and fake
-            D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-            D_result_realImg = D_result_realImg.mean()
-            D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
-            D_result_roughImg = D_result_roughImg.mean()
+            # # Discriminator output on real and fake
+            # D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
+            # D_result_realImg = D_result_realImg.mean()
+            # D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
+            # D_result_roughImg = D_result_roughImg.mean()
 
             # === Validate Discriminator ===
             D_celoss = CE_loss(aux_output_realImg, label)
