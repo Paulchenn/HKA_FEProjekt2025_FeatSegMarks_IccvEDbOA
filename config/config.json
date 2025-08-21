@@ -5,50 +5,51 @@
 
   "show_imgEmseTsd": false,
   "show_tsg": true,
-  "show_images_interval": 10,
+  "show_images_interval": 10000000,
 
   "save_path": "./Result",
 
   "log_interval": 10,
 
   "device": "cuda",
-  "batch_size": 20,
+  "batch_size": 10,
   "epochs": 999,
+  "patience_stage1": 20,
+  "patience_stage2": 30,
 
-  "path_tuned_D": "f./Result/20250804_155258/ImageNet256/tuned_D/Epoch_034.pth",
-  "path_optim_D_stage1": "f./Result/20250804_155258/ImageNet256/optim_D_stage1/Epoch_034.pth",
-  "path_optim_D_stage2": "f./Result/20250804_155258/ImageNet256/optim_D_stage2/Epoch_034.pth",
-  "path_tuned_G": "f./Result/20250804_155258/ImageNet256/tuned_G/Epoch_034.pth",
-  "path_optim_G_stage1": "f./Result/20250804_155258/ImageNet256/optim_G_stage1/Epoch_034.pth",
-  "path_optim_G_stage2": "f./Result/20250804_155258/ImageNet256/optim_G_stage2/Epoch_034.pth",
+  "path_tuned_D": "f./Result/20250821_153022/ImageNet256/tuned_netD/netD__stage1__Epoch_001.pth",
+  "path_optim_D_stage1": "f./Result/20250821_153022/ImageNet256/tuned_optimD/optimD__stage1__Epoch_001.pth",
+  "path_optim_D_stage2": "f./Result/20250821_153022/ImageNet256/tuned_optimD/optimD__stage2__Epoch_001.pth",
+
+  "path_tuned_G": "f./Result/20250821_153022/ImageNet256/tuned_netG/netG__stage1__Epoch_001.pth",
+  "path_optim_G_stage1": "f./Result/20250821_153022/ImageNet256/tuned_optimG/optimG__stage1__Epoch_001.pth",
+  "path_optim_G_stage2": "f./Result/20250821_153022/ImageNet256/tuned_optimG/optimG__stage2__Epoch_001.pth",
 
   "train_with_cls": true,
 
-  "downSize": 256,
+  "downSize": 128,
 
   "learning_rate": {
     "discriminator_stage1": 1e-5,
     "discriminator_stage2": 1e-5,
-    "generator_stage1": 1e-3,
-    "generator_stage2": 1e-3
+    "generator_stage1": 1e-4,
+    "generator_stage2": 1e-4
   },
 
   "loss_weights": {
-    "lambda_stage1_l1": 1.0,
+    "lambda_stage1_l1": 5.0,
     "lambda_stage1_GAN": 1.0,
     "lambda_stage1_CE": 0.5,
 
-    "lambda_stage2_l1": 1.0,
+    "lambda_stage2_l1": 5.0,
     "lambda_stage2_GAN": 1.0,
     "lambda_stage2_CE": 0.5,
     "lambda_stage2_cls": 1.0,
-    "lambda_stage2_edge": 1.0
+    "lambda_stage2_edge": 4.0
   },
 
-  "patience": 20,
-
   "image_size": 256,
-  "generator_input_dim": 128,
+  "noise_size": 100,
 
   "dataset": {
     "name": "ImageNet256",
@@ -75,9 +76,7 @@
       "16": "balance_beam",
       "17": "balloon",
       "18": "ballpoint",
-      "19": "banana"
-    },
-    "spare_synsets_2": {
+      "19": "banana",
       "20": "banjo",
       "21": "bannister",
       "22": "barbell",
@@ -157,6 +156,8 @@
       "96": "corkscrew",
       "97": "corn",
       "98": "cornet"
+    },
+    "spare_synsets_2": {
     }
   }
 }
