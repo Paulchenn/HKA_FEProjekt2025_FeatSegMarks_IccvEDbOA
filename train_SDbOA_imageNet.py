@@ -9,7 +9,7 @@ import torchvision.models as torch_models
 
 from collections import deque
 from datetime import datetime
-from models import generation_imageNet_V2_1 as generation_imageNet
+from models import generation_imageNet_V2_2 as generation_imageNet
 from torch import nn, optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     
 
     # === Initialize networks (and move to CPU/GPU) ===
-    netG    = generation_imageNet.generator(d=config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
+    netG    = generation_imageNet.generator(img_size=config.IMG_SIZE, z_dim=config.NOISE_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation_imageNet.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
     cls     = torch_models.resnet18(weights=cls_weights)
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
@@ -254,10 +254,10 @@ if __name__ == "__main__":
 
     # === Initialize Scheduler ===
     scheduler_mode = 'min'
-    scheduler_factor = 0.6
-    scheduler_patience = 7
+    scheduler_factor = 0.4
+    scheduler_patience = 10
     scheduler_threshold = 1e-3
-    scheduler_minLr = 1e-7
+    scheduler_minLr = 1e-6
     scheduler_D_stage1 = ReduceLROnPlateau(
         optimD_stage1,
         mode=scheduler_mode,
@@ -710,27 +710,42 @@ if __name__ == "__main__":
                 counter_noBetterValLoss = 0
             else:
                 counter_noBetterValLoss += 1
-                if counter_noBetterValLoss >= config.PATIENCE:
-                    # Save the best models
-                    export_weights(
-                        config=config,
-                        training_stage=training_stage,
-                        state='best',
-                        epoch=epoch,
-                        netD=netD_best,
-                        optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
-                        optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
-                        netG=netG_best,
-                        optimG_s1=optimG_best,
-                        optimG_s2=optimG_best
-                    )
-                    if training_stage==1:
+                if training_stage==1:
+                    if counter_noBetterValLoss >= config.PATIENCE_S1:
+                        # Save the best models
+                        export_weights(
+                            config=config,
+                            training_stage=training_stage,
+                            state='best',
+                            epoch=epoch,
+                            netD=netD_best,
+                            optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                            optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                            netG=netG_best,
+                            optimG_s1=optimG_best,
+                            optimG_s2=optimG_best
+                        )
+                        # switching to training stage 2
                         training_stage = 2
                         netD = netD_best
                         netG = netG_best
                         best_val_loss = None
-                        counter_noBetterValLoss = 0
-                    else:
+
+                else:
+                    if counter_noBetterValLoss >= config.PATIENCE_S2:
+                        # Save the best models
+                        export_weights(
+                            config=config,
+                            training_stage=training_stage,
+                            state='best',
+                            epoch=epoch,
+                            netD=netD_best,
+                            optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                            optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
+                            netG=netG_best,
+                            optimG_s1=optimG_best,
+                            optimG_s2=optimG_best
+                        )
                         print(f"counter for no better val loss = {counter_noBetterValLoss}")
                         if current_val_loss:
                             print(f"last current val loss = avg_G_loss = {current_val_loss:.4f}")
