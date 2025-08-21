@@ -14,6 +14,28 @@ class BlurPool2x(nn.Module):
     def forward(self, x):
         w = self.k.expand(self.channels, 1, 3, 3)
         return F.conv2d(x, w, stride=2, padding=1, groups=self.channels)
+    
+class UpBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, norm='in', mode='bilinear'):
+        super().__init__()
+        self.up = nn.Upsample(scale_factor=2, mode=mode, align_corners=False if mode=='bilinear' else None)
+        self.aa = nn.Conv2d(in_ch, in_ch, 3, padding=1, groups=in_ch, bias=False)  # kleiner FIR-Blur
+        with torch.no_grad():
+            k = torch.tensor([[1,2,1],[2,4,2],[1,2,1]], dtype=torch.float32)
+            k = (k / k.sum()).view(1,1,3,3)
+            self.aa.weight.copy_(k.repeat(in_ch,1,1,1))
+        self.aa.weight.requires_grad_(False)  # fixierter Blur
+        self.pad = nn.ReflectionPad2d(1)
+        self.conv = nn.Conv2d(in_ch, out_ch, 3, padding=0)
+        self.norm = nn.InstanceNorm2d(out_ch, affine=True) if norm=='in' else nn.GroupNorm(32, out_ch)
+        self.act = nn.ReLU(inplace=True)
+    def forward(self, x):
+        x = self.up(x)
+        x = self.aa(x)           # Anti-Aliasing
+        x = self.pad(x)
+        x = self.conv(x)
+        return self.act(self.norm(x))
+
 
 
 class generator(nn.Module):
@@ -22,79 +44,94 @@ class generator(nn.Module):
         super(generator, self).__init__()
         self.myDebug=False
         # z->Featuremap (passt für 256x256: Kernel = img_size/4 = 64 -> 64x64)
-        self.deconv1_1 = nn.ConvTranspose2d(100, d*2, int(img_size/4), 1, 0)
-        self.deconv1_1_bn = nn.BatchNorm2d(d*2)
-        # (unverändert; wird unten nicht genutzt – belassen für Minimaländerung)
-        self.deconv1_2 = nn.ConvTranspose2d(10, d*2, 4, 1, 0)
-        self.deconv1_2_bn = nn.BatchNorm2d(d*2)
+        self.deconv1_1 = nn.ConvTranspose2d(100, 256, 16, 1, 0)
+        self.deconv1_1_bn = nn.BatchNorm2d(256)
+
+
+        # edgeMap-Encoder -------------------------------------------------------------------------
+        self.conv1_1edge = nn.Conv2d(3, 32, kernel_size=3, padding=1)    # channels: 3 --> 32    | pixels: 256 --> 256
+        self.conv1_2edge = nn.Conv2d(32, 32, kernel_size=3, padding=1)   # channels: 3 --> 32    | pixels: 256 --> 256
+        self.maxpool1edge = nn.MaxPool2d(kernel_size=2)                  # channels: 32 --> 32   | pixels: 256 --> 128
+        
+        self.conv2_1edge = nn.Conv2d(32, 64, 3, padding=1)               # channels: 64 --> 64   | pixels: 128 --> 128
+        self.conv2_2edge = nn.Conv2d(64, 64, 3, padding=1)               # channels: 64 --> 64   | pixels: 128 --> 128
+        self.maxpool2edge = nn.MaxPool2d(kernel_size=2)                  # channels: 64 --> 64   | pixels: 128 --> 64
+        # self.blurpool1edge = BlurPool2x(32)
+
+        self.conv3_1edge = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # channels: 64 --> 128  | pixels: 64 --> 64
+        self.conv3_2edge = nn.Conv2d(128, 128, kernel_size=3, padding=1) # channels: 128 --> 128 | pixels: 64 --> 64
+        self.conv3_3edge = nn.Conv2d(128, 128, kernel_size=3, padding=1) # channels: 128 --> 128 | pixels: 64 --> 64
+        self.maxpool3edge = nn.MaxPool2d(kernel_size=2)                  # channels: 128 --> 128 | pixels: 64 --> 32
+        # self.blurpool2edge = BlurPool2x(64)
+
+        self.conv4_1edge = nn.Conv2d(128, 256, kernel_size=3, padding=1) # channels: 128 --> 256 | pixels: 32 --> 32
+        self.conv4_2edge = nn.Conv2d(256, 256, kernel_size=3, padding=1) # channels: 256 --> 256 | pixels: 32 --> 32
+        self.conv4_3edge = nn.Conv2d(256, 256, kernel_size=3, padding=1) # channels: 256 --> 256 | pixels: 32 --> 32
+        self.maxpool4edge = nn.MaxPool2d(kernel_size=2)                  # channels: 256 --> 256 | pixels: 32 --> 16
+        # self.blurpool2edge = BlurPool2x(64)
+        # ------------------------------------------------------------------------------------------
+
+
+        # blurImg-Encoder -------------------------------------------------------------------------
+        self.conv1_1blur = nn.Conv2d(3, 32, kernel_size=3, padding=1)    # channels: 3 --> 32    | pixels: 256 --> 256
+        self.conv1_2blur = nn.Conv2d(32, 32, kernel_size=3, padding=1)   # channels: 3 --> 32    | pixels: 256 --> 256
+        self.maxpool1blur = nn.MaxPool2d(kernel_size=2)                  # channels: 32 --> 32   | pixels: 256 --> 128
+        
+        self.conv2_1blur = nn.Conv2d(32, 64, 3, padding=1)               # channels: 64 --> 64   | pixels: 128 --> 128
+        self.conv2_2blur = nn.Conv2d(64, 64, 3, padding=1)               # channels: 64 --> 64   | pixels: 128 --> 128
+        self.maxpool2blur = nn.MaxPool2d(kernel_size=2)                  # channels: 64 --> 64   | pixels: 128 --> 64
+        # self.blurpool1blur = BlurPool2x(32)
+
+        self.conv3_1blur = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # channels: 64 --> 128  | pixels: 64 --> 64
+        self.conv3_2blur = nn.Conv2d(128, 128, kernel_size=3, padding=1) # channels: 128 --> 128 | pixels: 64 --> 64
+        self.conv3_3blur = nn.Conv2d(128, 128, kernel_size=3, padding=1) # channels: 128 --> 128 | pixels: 64 --> 64
+        self.maxpool3blur = nn.MaxPool2d(kernel_size=2)                  # channels: 128 --> 128 | pixels: 64 --> 32
+        # self.blurpool2blur = BlurPool2x(64)
+
+        self.conv4_1blur = nn.Conv2d(128, 256, kernel_size=3, padding=1) # channels: 128 --> 256 | pixels: 32 --> 32
+        self.conv4_2blur = nn.Conv2d(256, 256, kernel_size=3, padding=1) # channels: 256 --> 256 | pixels: 32 --> 32
+        self.conv4_3blur = nn.Conv2d(256, 256, kernel_size=3, padding=1) # channels: 256 --> 256 | pixels: 32 --> 32
+        self.maxpool4blur = nn.MaxPool2d(kernel_size=2)                  # channels: 256 --> 256 | pixels: 32 --> 16
+        # self.blurpool2blur = BlurPool2x(64)
+        # ------------------------------------------------------------------------------------------
+
+
+        # Upsampling -------------------------------------------------------------------------------
+        self.up4 = UpBlock(768, 384)   # 16 -> 32
+        self.up3 = UpBlock(384, 128)   # 32 -> 64
+        self.up2 = UpBlock(128,  32)   # 64 -> 128
+        self.up1 = UpBlock( 32,  32)   # 128 -> 256
+        self.out = nn.Sequential(
+            nn.ReflectionPad2d(1),
+            nn.Conv2d(32, 3, 3, padding=0),
+            nn.Tanh()
+        )
+        # self.deconv4 = nn.ConvTranspose2d(768, 384, 4, 2, 1)  # channels: 768 --> 512 | pixels: 16 --> 32
+        # self.deconv4_bn = nn.BatchNorm2d(384)
+        # self.deconv3 = nn.ConvTranspose2d(384, 128, 4, 2, 1)    # channels: 512 --> 256 | pixels: 32 --> 64
+        # self.deconv3_bn = nn.BatchNorm2d(128)
+        # self.deconv2 = nn.ConvTranspose2d(128, 32, 4, 2, 1)    # channels: 256 --> 128 | pixels: 64 --> 128
+        # self.deconv2_bn = nn.BatchNorm2d(32)
+        # self.deconv1 = nn.ConvTranspose2d(32, 3, 4, 2, 1)     # channels: 768 --> 512 | pixels: 128 --> 256
+        # self.deconv1_bn = nn.BatchNorm2d(3)
+
 
         # NEU (minimal): zwei kleine Refine-Blöcke auf 64x64 nach dem Concatenate
         self.refine1 = nn.Sequential(
-            nn.Conv2d(d*6, d*6, kernel_size=3, padding=1),
-            nn.BatchNorm2d(d*6),
+            nn.Conv2d(768, 768, kernel_size=3, padding=1),
+            nn.BatchNorm2d(768),
             nn.ReLU(inplace=True)
         )
         self.refine2 = nn.Sequential(
-            nn.Conv2d(d*6, d*6, kernel_size=3, padding=1),
-            nn.BatchNorm2d(d*6),
+            nn.Conv2d(768, 768, kernel_size=3, padding=1),
+            nn.BatchNorm2d(768),
             nn.ReLU(inplace=True)
         )
 
-        # Upsampling-Stufen wie gehabt
-        self.deconv2 = nn.ConvTranspose2d(d*6, d*2, 4, 2, 1)  # 64 -> 128
-        self.deconv2_bn = nn.BatchNorm2d(d*2)
-        self.deconv3 = nn.ConvTranspose2d(d*2, d, 4, 2, 1)    # (bleibt definiert, wird nicht benutzt)
-        self.deconv3_bn = nn.BatchNorm2d(d)
-        self.deconv4 = nn.ConvTranspose2d(d*2, 3, 4, 2, 1)    # 128 -> 256
-
-        # edgeMap-Encoder (bis 64x64)--------------------------------------------------------------
-        self.conv1_1 = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv1_2 = nn.Conv2d(32, 32, kernel_size=3, padding=1)
-        # 256×256 Block (zusätzlich):
-        self.conv1_3 = nn.Conv2d(32, 32, 3, padding=1)
-        self.conv1_4 = nn.Conv2d(32, 32, 3, padding=1)
-        self.maxpool1 = nn.MaxPool2d(kernel_size=2)
-        #self.blurpool1 = BlurPool2x(32)
-
-        self.conv2_1 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv2_2 = nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        # 128×128 Block (zusätzlich):
-        self.conv2_3 = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv2_4 = nn.Conv2d(64, 64, 3, padding=1)
-        self.maxpool2 = nn.MaxPool2d(kernel_size=2)
-        #self.blurpool2 = BlurPool2x(64)
-
-        # 64×64 Head (ersetzen):
-        # vorher: self.conv3_1 = nn.Conv2d(64, d*2, 3, padding=1)
-        self.conv3_1 = nn.Conv2d(64, 128, 3, padding=1)
-        self.conv3_pj = nn.Conv2d(128, d * 2, 1)
-        #------------------------------------------------------------------------------------------
-
-        # blurImg-Encoder (spiegelgleich)----------------------------------------------------------
-        self.conv1_1col = nn.Conv2d(3, 32, kernel_size=3, padding=1)
-        self.conv1_2col = nn.Conv2d(32, 32, kernel_size=3, padding=1)
-        # 256×256 Block (zusätzlich):
-        self.conv1_3col = nn.Conv2d(32, 32, 3, padding=1)
-        self.conv1_4col = nn.Conv2d(32, 32, 3, padding=1)
-        self.maxpool1col = nn.MaxPool2d(kernel_size=2)
-        # self.blurpool1col = BlurPool2x(32)
-
-        self.conv2_1col = nn.Conv2d(32, 64, kernel_size=3, padding=1)
-        self.conv2_2col = nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        # 128×128 Block (zusätzlich):
-        self.conv2_3col = nn.Conv2d(64, 64, 3, padding=1)
-        self.conv2_4col = nn.Conv2d(64, 64, 3, padding=1)
-        self.maxpool2col = nn.MaxPool2d(kernel_size=2)
-        # self.blurpool2col = BlurPool2x(64)
-
-        # 64×64 Head (ersetzen):
-        # vorher: self.conv3_1col = nn.Conv2d(64, d*2, kernel_size=3, stride=1, padding=1)
-        self.conv3_1col = nn.Conv2d(64, 128, 3, padding=1)
-        self.conv3_pjcol = nn.Conv2d(128, d * 2, 1)
-        # ------------------------------------------------------------------------------------------
 
         # Self-Attention auf 128x128 (unverändert)
-        self.self_att = MultiheadAttention(embed_dim=d*2, num_heads=4, batch_first=True)
+        self.mha     = MultiheadAttention(embed_dim=128, num_heads=4, batch_first=True)
+
 
         #neu: zusätzliche Convs auf 128×128 (sichtbare Mehrschärfe/Details, weniger Checkerboard)
         self.refine128 = nn.Sequential(
@@ -113,112 +150,97 @@ class generator(nn.Module):
             print("Input shapes:")
             print(f"noiseVector: {noiseVector.shape}, edgeMap: {edgeMap.shape}, blurImg: {blurImg.shape}")
 
-        x = F.relu(self.deconv1_1_bn(self.deconv1_1(noiseVector)))
+        noiseVector = F.relu(self.deconv1_1_bn(self.deconv1_1(noiseVector)))
         if self.myDebug:
-            print(f"After deconv1_1: {x.shape}")
+            print(f"After deconv1_1: {noiseVector.shape}")
 
         #########################################################
-        # edgeMap-encoder -> 64x64
-        edgeMap = F.relu(self.conv1_1(edgeMap))
-        edgeMap = F.relu(self.conv1_2(edgeMap))
-        edgeMap = F.relu(self.conv1_3(edgeMap))  # neu
-        edgeMap = F.relu(self.conv1_4(edgeMap))  # neu
-        edgeMap = self.maxpool1(edgeMap)  # 256 -> 128
+        # edgeMap-encoder
+        edgeMap = F.relu(self.conv1_1edge(edgeMap))
+        edgeMap = F.relu(self.conv1_2edge(edgeMap))
+        edgeMap = self.maxpool1edge(edgeMap)
         if self.myDebug:
             print(f"After edgeMap block1: {edgeMap.shape}")
-        #edgeMap = self.blurpool1(edgeMap)
-
-        edgeMap = F.relu(self.conv2_1(edgeMap))
-        edgeMap = F.relu(self.conv2_2(edgeMap))
-        edgeMap = F.relu(self.conv2_3(edgeMap))  # neu
-        edgeMap = F.relu(self.conv2_4(edgeMap))  # neu
-        edgeMap = self.maxpool2(edgeMap)  # 128 -> 64
+        edgeMap = F.relu(self.conv2_1edge(edgeMap))
+        edgeMap = F.relu(self.conv2_2edge(edgeMap))
+        edgeMap = self.maxpool2edge(edgeMap)
         if self.myDebug:
             print(f"After edgeMap block2: {edgeMap.shape}")
-        #edgeMap = self.blurpool2(edgeMap)
-
-        edgeMap = F.relu(self.conv3_1(edgeMap))  # 64 -> 128
-        y = F.relu(self.conv3_pj(edgeMap))  # 128 -> 256
+        edgeMap = F.relu(self.conv3_1edge(edgeMap))
+        edgeMap = F.relu(self.conv3_2edge(edgeMap))
+        edgeMap = F.relu(self.conv3_3edge(edgeMap))
+        edgeMap = self.maxpool3edge(edgeMap)
         if self.myDebug:
-            print(f"EdgeMap head y: {y.shape}")
+            print(f"After edgeMap block3: {edgeMap.shape}")
+        edgeMap = F.relu(self.conv4_1edge(edgeMap))
+        edgeMap = F.relu(self.conv4_2edge(edgeMap))
+        edgeMap = F.relu(self.conv4_3edge(edgeMap))
+        edgeMap = self.maxpool4edge(edgeMap)
+        if self.myDebug:
+            print(f"After edgeMap block4: {edgeMap.shape}")
 
-        # blurImg-encoder -> 64x64
-        blurImg = F.relu(self.conv1_1col(blurImg))
-        blurImg = F.relu(self.conv1_2col(blurImg))
-        blurImg = F.relu(self.conv1_3col(blurImg))  # neu
-        blurImg = F.relu(self.conv1_4col(blurImg))  # neu
-        blurImg = self.maxpool1col(blurImg)
+
+        # blurImg-encoder
+        blurImg = F.relu(self.conv1_1blur(blurImg))
+        blurImg = F.relu(self.conv1_2blur(blurImg))
+        blurImg = self.maxpool1blur(blurImg)
         if self.myDebug:
             print(f"After blurImg block1: {blurImg.shape}")
-        #blurImg = self.blurpool1col(blurImg)
-
-        blurImg = F.relu(self.conv2_1col(blurImg))
-        blurImg = F.relu(self.conv2_2col(blurImg))
-        blurImg = F.relu(self.conv2_3col(blurImg))  # neu
-        blurImg = F.relu(self.conv2_4col(blurImg))  # neu
-        blurImg = self.maxpool2col(blurImg)
+        blurImg = F.relu(self.conv2_1blur(blurImg))
+        blurImg = F.relu(self.conv2_2blur(blurImg))
+        blurImg = self.maxpool2blur(blurImg)
         if self.myDebug:
             print(f"After blurImg block2: {blurImg.shape}")
-        #blurImg = self.blurpool2col(blurImg)
-
-        blurImg = F.relu(self.conv3_1col(blurImg))  # 64 -> 128
-        yc = F.relu(self.conv3_pjcol(blurImg))  # 128 -> 256
+        blurImg = F.relu(self.conv3_1blur(blurImg))
+        blurImg = F.relu(self.conv3_2blur(blurImg))
+        blurImg = F.relu(self.conv3_3blur(blurImg))
+        blurImg = self.maxpool3blur(blurImg)
         if self.myDebug:
-            print(f"BlurImg head yc: {yc.shape}")
+            print(f"After blurImg block3: {blurImg.shape}")
+        blurImg = F.relu(self.conv4_1blur(blurImg))
+        blurImg = F.relu(self.conv4_2blur(blurImg))
+        blurImg = F.relu(self.conv4_3blur(blurImg))
+        blurImg = self.maxpool4blur(blurImg)
+        if self.myDebug:
+            print(f"After blurImg block4: {blurImg.shape}")
         #########################################################
 
         # Concatenate edgeMap and blurImg heads
         try:
-            x = torch.cat([x, y, yc], 1)  # [B, d*6, 64, 64]
+            x = torch.cat([noiseVector, edgeMap, blurImg], 1)
             if self.myDebug:
                 print(f"After concatenate: {x.shape}")
         except RuntimeError as e:
             print(f"RuntimeError: {e}")
             return
-
-        # *** MINIMALE MEHR-TIEFE auf 64x64 (ohne Shape-Änderung) ***
+        
+        
         x = self.refine1(x)
         if self.myDebug:
             print(f"After refine1: {x.shape}")
         # x = self.refine2(x)   # --> (maybe) not needed anymore because of new layers before concatentate
 
-        # 64 -> 128
-        x = F.relu(self.deconv2_bn(self.deconv2(x)))   # [B, d*2, 128, 128]
+        x = self.up4(x)                     # 32x32
+        if self.myDebug:
+            print(f"After deconv4: {x.shape}")
+        x = self.up3(x)                     # 64x64
+        if self.myDebug:
+            print(f"After deconv3: {x.shape}")
+            
+        B,C,H,W = x.shape
+        x = x.view(B,C,-1).permute(0,2,1)             # [B, HW, C]
+        x,_ = self.mha(x, x, x, need_weights=False)
+        if self.myDebug:
+            print(f"After mha: {x.shape}")
+        x = x.permute(0,2,1).view(B,C,H,W)
+        
+        x = self.up2(x)                     # 128x128
         if self.myDebug:
             print(f"After deconv2: {x.shape}")
-        
-        #neu
-        # x = self.refine128(x)  # mehr Tiefe auf 128  --> (maybe) not needed anymore because of new layers before concatentate
-
-        # Self-Attention auf 128x128
-        B, C, H, W = x.shape
-        x_flat = x.view(B, C, -1).permute(0, 2, 1)      # [B, H*W, C]
-        x_attended, _ = self.self_att(x_flat, x_flat, x_flat, need_weights=False)
-        x = x_attended.permute(0, 2, 1).view(B, C, H, W)
+        x = self.up1(x)                     # 256x256
+        x = self.out(x)
         if self.myDebug:
-            print(f"After self-attention: {x_attended.shape}")
-
-
-        # ---------------------------------------------------------------------------------
-        # B, C, H, W = x.shape
-        # x_att_in = F.avg_pool2d(x, 2)   # 128 --> 64; tokens 4 times less
-
-        # Hs, Ws = x_att_in.shape[-2:]
-        # x_flat = x_att_in.view(B, C, -1).permute(0, 2, 1)  # [B, Hs*Ws, C]
-        # x_attended, _ = self.self_att(x_flat, x_flat, x_flat, need_weights=False)
-        # x_attended = x_attended.permute(0, 2, 1).view(B, C, Hs, Ws)
-        # if self.myDebug:
-        #     print(f"After self-attention: {x_attended.shape}")
-        
-        # # zurück auf 128×128 für die nächste Stufe
-        # x = F.interpolate(x_attended, size=(H, W), mode='bilinear', align_corners=False)
-        # ---------------------------------------------------------------------------------
-        
-
-        # 128 -> 256
-        x = torch.tanh(self.deconv4(x))
-        if self.myDebug:
-            print(f"After self-attention: {x_attended.shape}")
+            print(f"Final: {x.shape}")
 
         return x
 
