@@ -7,6 +7,7 @@ import pdb
 import pytz
 
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 
 from collections import deque
@@ -81,9 +82,10 @@ def get_config(file_path):
     config["PATH_OPTIM_G_S2"] = config["path_optim_G_stage2"]
 
     config["IMG_SIZE"] = config["image_size"]
-    config["GEN_IN_DIM"] = config["generator_input_dim"]
+    config["NOISE_SIZE"] = config["noise_size"]
 
-    config["PATIENCE"] = config["patience"]
+    config["PATIENCE_S1"] = config["patience_stage1"]
+    config["PATIENCE_S2"] = config["patience_stage2"]
 
     config["SHOW_IMG_EMSE_TSD"] = config["show_imgEmseTsd"]
     config["SHOW_TSG"] = config["show_tsg"]
@@ -292,6 +294,86 @@ def show_imgEmseTsd(
     plt.pause(2)  # Show for 2 seconds (adjust as needed)
     plt.close()
 
+def _move_fig_top_right(fig):
+    """Place the window so that its top-right corner touches the screen's top-right corner."""
+    backend = matplotlib.get_backend().lower()
+    mgr = fig.canvas.manager
+    try:
+        # ---- Qt (Qt5Agg / QtAgg) ----
+        if "qt" in backend:
+            win = mgr.window
+            win.show()                      # ensure window exists and has a size
+            fig.canvas.draw_idle()
+            plt.pause(0.05)
+
+            rect = win.frameGeometry()      # includes window decorations
+            ww, wh = rect.width(), rect.height()
+
+            scr = win.screen().availableGeometry()
+            x = scr.right() - ww            # right edge minus window width
+            y = scr.top()                   # top edge
+            win.move(x, y)
+
+        # ---- GTK3 (Gtk3Agg) ----
+        elif "gtk3" in backend or "gtk" in backend:
+            # Requires PyGObject (should be present if GTK3Agg works)
+            import gi
+            gi.require_version("Gtk", "3.0")
+            gi.require_version("Gdk", "3.0")
+            from gi.repository import Gtk, Gdk
+
+            win = mgr.window                 # Gtk.Window
+            win.show_all()
+
+            # process pending events so sizes are realized
+            while Gtk.events_pending():
+                Gtk.main_iteration_do(False)
+
+            gdk_win = win.get_window()
+            if gdk_win is None:
+                return
+
+            # window size including frame (decorations)
+            frame = gdk_win.get_frame_extents()
+            ww, wh = frame.width, frame.height
+
+            # preferred: monitor workarea; fallback: screen size
+            x = y = 0
+            # try:
+            #     display = Gdk.Display.get_default()
+            #     monitor = display.get_primary_monitor()
+            #     # workarea excludes panels/docks if available
+            #     if hasattr(monitor, "get_workarea"):
+            #         area = monitor.get_workarea()
+            #     else:
+            #         area = monitor.get_geometry()
+            #     sw, sh = area.width, area.height
+            #     sx, sy = area.x, area.y
+            #     x = sx + sw - ww
+            #     y = sy
+            # except Exception:
+            screen = win.get_screen()
+            sw, sh = screen.get_width(), screen.get_height()
+            x = sw - ww
+            y = 0
+
+            # On Wayland this may be ignored by the compositor
+            win.move(int(x), int(y))
+
+        # ---- Tk (TkAgg) ----
+        elif "tk" in backend:
+            win = mgr.window
+            win.update_idletasks()
+            ww, wh = win.winfo_width(), win.winfo_height()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            x = sw - ww
+            y = 0
+            win.wm_geometry(f"+{x}+{y}")
+
+        else:
+            print(f"[show_tsg] Window move not supported for backend '{backend}'.")
+    except Exception as e:
+        print(f"[show_tsg] Could not move window: {e}")
 
 def show_tsg(
     img=None,
@@ -307,25 +389,13 @@ def show_tsg(
     e_edeformed_G_fine=None
 ):
     """
-    Show the original image, deformed image, and edge map.
-    :param img:
-    :param e_extend:
-    :param e_deformed:
-    :param img_blur:
-    :param img_for_loss:
-    :param G_rough:
-    :param G_fine:
-    :param G_fine_resized:
-    :param G_fine_norm:
-    :param e_extend_G_fine:
-    :param e_edeformed_G_fine:
+    Visualize inputs/outputs for TSG: originals, edges, blurred image, and generated results.
     """
-    
-    # === Show the original and deformed image ===
+    fig = plt.figure(figsize=(10.5, 8))  # create the figure first (we will move the window later)
+
+    # === show original and derived images ===
     try:
-        plt.figure(figsize=(10.5, 10.5))  # Adjusted figure size
         plt.subplot(3, 4, 1)
-        # plt.axis('off')
         plt.title('original image')
         plt.imshow(np.clip(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -333,7 +403,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 2)
-        # plt.axis('off')
         plt.title('edge map')
         plt.imshow(np.clip(e_extend[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -341,7 +410,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 3)
-        # plt.axis('off')
         plt.title('deformed edge map')
         plt.imshow(np.clip(e_deformed[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -349,7 +417,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 4)
-        # plt.axis('off')
         plt.title('blured image')
         plt.imshow(np.clip(img_blur[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -357,7 +424,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 5)
-        # plt.axis('off')
         plt.title('image for loss')
         plt.imshow(np.clip(img_for_loss[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -365,7 +431,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 6)
-        # plt.axis('off')
         plt.title('gen img s1')
         plt.imshow(np.clip(G_rough[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -373,7 +438,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 7)
-        # plt.axis('off')
         plt.title('gen img s2')
         G_fine_f32 = G_fine.float()
         plt.imshow(np.clip(G_fine_f32[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
@@ -382,7 +446,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 8)
-        # plt.axis('off')
         plt.title('resized img s2')
         plt.imshow(np.clip(G_fine_resized[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -390,7 +453,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 9)
-        # plt.axis('off')
         plt.title('norm res img s2')
         plt.imshow(np.clip(G_fine_norm[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -398,7 +460,6 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 10)
-        # plt.axis('off')
         plt.title('edge map gen img s2')
         plt.imshow(np.clip(e_extend_G_fine[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
@@ -406,23 +467,17 @@ def show_tsg(
 
     try:
         plt.subplot(3, 4, 11)
-        # plt.axis('off')
         plt.title('def map gen img s2')
         plt.imshow(np.clip(e_edeformed_G_fine[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
     except:
         pass
 
-    # try:
-    #     plt.subplot(3, 4, 12)
-    #     # plt.axis('off')
-    #     plt.title('edge map gen img s2 gr-ch')
-    #     plt.imshow(np.clip(edge_map_from_syn[0, 0:1, :, :].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    # except:
-    #     pass
+    plt.tight_layout()
+    plt.show(block=False)       # show the window (non-blocking)
+    _move_fig_top_right(fig)    # move it to the top-right corner
+    plt.pause(0.1)              # keep it on screen briefly (adjust as needed)
+    plt.close(fig)
 
-    plt.show(block=False)
-    plt.pause(0.1)  # Show for 2 seconds (adjust as needed)
-    plt.close()
 
 
 def show_result(
