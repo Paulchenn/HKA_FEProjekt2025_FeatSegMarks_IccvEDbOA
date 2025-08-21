@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pdb
 
 # --------- Helfer ----------
 def conv_bn_relu(in_ch, out_ch, k=3, s=1, p=1, use_relu=True):
@@ -124,7 +125,7 @@ class generator(nn.Module):
     - Decoder: Spiegelbild (13 Convs) mit MaxUnpool, Indizes vom edgeMap-Encoder
     - Output: 3-Kanal-Bild mit tanh
     """
-    def __init__(self, img_size=256, z_dim=100, decoder_relu=True):
+    def __init__(self, d=None, img_size=256, z_dim=100, decoder_relu=True):
         super().__init__()
         assert img_size % 32 == 0, "img_size muss durch 32 teilbar sein (5x Pooling)."
         self.img_size = img_size
@@ -173,3 +174,49 @@ class generator(nn.Module):
         # --- Decoder (Spiegel zu 13 Convs, MaxUnpool mit edge-Indices) ---
         out = self.decoder(bottleneck, edge_feats)
         return out
+
+
+class Discriminator(nn.Module):
+    def __init__(self, num_classes=10, input_size=256):
+        super(Discriminator, self).__init__()
+
+        def discriminator_block(in_filters, out_filters, bn=True):
+            """Returns layers of each discriminator block"""
+            block = [nn.Conv2d(in_filters, out_filters, 3, 2, 1),
+                     nn.LeakyReLU(0.2, inplace=True),
+                     nn.Dropout2d(0.25)]
+            if bn:
+                block.append(nn.BatchNorm2d(out_filters, momentum=0.8))
+            return block
+
+        self.conv_blocks = nn.Sequential(
+            *discriminator_block(3, 16, bn=False),  # 256 -> 128
+            *discriminator_block(16, 32),          # 128 -> 64
+            *discriminator_block(32, 64),          # 64  -> 32
+            *discriminator_block(64, 128),         # 32  -> 16
+        )
+
+        # Dynamically compute the size after conv_blocks
+        with torch.no_grad():
+            dummy = torch.zeros(1, 3, input_size, input_size)
+            out = self.conv_blocks(dummy)
+            self.flat_features = out.view(1, -1).shape[1]
+
+        self.adv_layer = nn.Sequential(nn.Linear(self.flat_features, 1), nn.Sigmoid())
+        self.aux_layer = nn.Sequential(
+            nn.Linear(self.flat_features, num_classes),
+            nn.Softmax(dim=1)
+        )
+
+    def forward(self, img):
+        out = self.conv_blocks(img)
+        out = out.view(out.shape[0], -1)
+        validity = self.adv_layer(out)
+        label = self.aux_layer(out)
+        return validity, label
+
+def normal_init(m, mean, std):
+    if isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.Conv2d):
+        m.weight.data.normal_(mean, std)
+        if m.bias is not None:
+            m.bias.data.zero_()
