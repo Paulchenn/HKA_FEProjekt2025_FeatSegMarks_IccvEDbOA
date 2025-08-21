@@ -2,16 +2,21 @@ import csv
 import matplotlib.pyplot as plt
 import os
 import pdb
+#from pynput.keyboard import Controller
 
 # === CONFIG ===
 #print(os.getcwd())
 result_dir = "./Result"
-available_results = [d for d in os.listdir(result_dir) if os.path.isdir(os.path.join(result_dir, d)) and d.startswith("2025")]
-available_results = sorted(available_results, reverse=True)
-train_csv_path = os.path.join(result_dir, available_results[0], "metrics", "iterations_metrics.csv") if available_results else None
-val_csv_path = os.path.join(result_dir, available_results[0], "metrics", "epoch_metrics.csv") if available_results else None
 
 # === Funktionen ===
+def get_correct_path(result_dir):
+    available_results = [d for d in os.listdir(result_dir) if os.path.isdir(os.path.join(result_dir, d)) and d.startswith("2025")]
+    available_results = sorted(available_results, reverse=True)
+    train_csv_path = os.path.join(result_dir, available_results[0], "metrics", "iterations_metrics.csv") if available_results else None
+    val_csv_path = os.path.join(result_dir, available_results[0], "metrics", "epoch_metrics.csv") if available_results else None
+
+    return train_csv_path, val_csv_path
+
 def moving_average(values, window_size):
     if len(values) < window_size:
         return values
@@ -42,7 +47,9 @@ def parse_int_list(data, key):
     except Exception:
         return []
 
-def plot_gan_logs(axs):
+def plot_gan_logs(axs, result_dir):
+    train_csv_path, val_csv_path = get_correct_path(result_dir)
+
     train_data = safe_read_csv_raw(train_csv_path)
     val_data = safe_read_csv_raw(val_csv_path)
 
@@ -103,7 +110,13 @@ def plot_gan_logs(axs):
 def on_key(event):
     if event.key == 'r':
         print("Reloading plots...")
-        plot_gan_logs(axs)
+        plot_gan_logs(axs, result_dir)
+        print("... finished.")
+    elif event.key == 'c':
+        print("Clearing plots...")
+        for ax in axs.flat:
+            ax.clear()
+        fig.canvas.draw()
         print("... finished.")
     elif event.key == 'q':
         print("Exiting.")
@@ -113,6 +126,10 @@ def on_key(event):
 fig, axs = plt.subplots(2, 2, figsize=(8.5, 6))
 fig.suptitle("GAN Training & Validation Losses (press 'r' to reload, 'q' to quit)")
 
-plot_gan_logs(axs)
+plot_gan_logs(axs, result_dir)
 fig.canvas.mpl_connect('key_press_event', on_key)
 plt.show()
+
+while(1):
+    kb = Controller()
+    kb.press('r'); kb.release('r')
