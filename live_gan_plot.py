@@ -5,9 +5,11 @@ import pdb
 
 # === CONFIG ===
 #print(os.getcwd())
-train_csv_path = "./Result/20250819_111333/metrics/iterations_metrics.csv"  # Pfad zur Trainings-CSV
-val_csv_path = "./Result/20250819_111333/metrics/epoch_metrics.csv"      # Pfad zur Validierungs-CSV
-refresh_interval = 1  # Sekunden zwischen den Updates
+result_dir = "./Result"
+available_results = [d for d in os.listdir(result_dir) if os.path.isdir(os.path.join(result_dir, d)) and d.startswith("2025")]
+available_results = sorted(available_results, reverse=True)
+train_csv_path = os.path.join(result_dir, available_results[0], "metrics", "iterations_metrics.csv") if available_results else None
+val_csv_path = os.path.join(result_dir, available_results[0], "metrics", "epoch_metrics.csv") if available_results else None
 
 # === Funktionen ===
 def moving_average(values, window_size):
