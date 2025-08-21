@@ -13,6 +13,7 @@ from collections import deque
 from types import SimpleNamespace
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split, Subset
+from torch.autograd import Variable
 from datetime import datetime
 from PIL import Image
 
@@ -429,7 +430,6 @@ def show_result(
         num_epoch,
         img=None,
         edgeMap=None,
-        deformedMap=None,
         path='Result/result.png',
         print_original=False,
         show=False,
@@ -440,10 +440,10 @@ def show_result(
     mn_batch = edgeMap.shape[0]
 
     if not print_original:
-        zz = torch.randn(mn_batch, 100, 1, 1).to(config.DEVICE)
+        z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(config.DEVICE))
+        img_blur = blur_image(img, config.DOWN_SIZE)
         netG.eval()
-        img_blur = blur_image(img, 24)
-        test_images = netG(zz, deformedMap, img_blur)
+        test_images = netG(z_, edgeMap, img_blur)
         netG.train()
         myTitle = 'Generated Images'
     else:
