@@ -9,7 +9,7 @@ import torchvision.models as torch_models
 
 from collections import deque
 from datetime import datetime
-from models import generation_imageNet
+from models import generation_imageNet_V2_1 as generation_imageNet
 from torch import nn, optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision import transforms
@@ -191,7 +191,7 @@ if __name__ == "__main__":
     
 
     # === Initialize networks (and move to CPU/GPU) ===
-    netG    = generation_imageNet.generator(config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
+    netG    = generation_imageNet.generator(d=config.GEN_IN_DIM, img_size=config.IMG_SIZE).to(config.DEVICE)       # Generator network with input size GEN_IN_DIM
     netD    = generation_imageNet.Discriminator(config.NUM_CLASSES, input_size=config.IMG_SIZE).to(config.DEVICE) 
     cls     = torch_models.resnet18(weights=cls_weights)
     cls.fc  = nn.Linear(cls.fc.in_features, config.NUM_CLASSES) # Passe den letzten Layer an deine num_classes an
@@ -316,7 +316,7 @@ if __name__ == "__main__":
         # <<< EMSE ===
 
         # === TSD >>>
-        DEFORMED_IMG_TEST = tsd.doTSD(EDGE_MAP_TEST)
+        DEFORMED_MAP_TEST = tsd.doTSD(EDGE_MAP_TEST)
         # <<< TSD ===
 
         # === Show images depending on configuration ===
@@ -325,7 +325,6 @@ if __name__ == "__main__":
             num_epoch=-1,
             img=IMG,
             edgeMap=EDGE_MAP_TEST,
-            deformedMap=DEFORMED_IMG_TEST,
             path=path2save_epochImg,
             print_original=True,
             netG=netG,
@@ -514,8 +513,7 @@ if __name__ == "__main__":
                 config=config,
                 num_epoch=epoch,
                 img=IMG,
-                edgeMap=EDGE_MAP_TEST,
-                deformedMap=DEFORMED_IMG_TEST,
+                edgeMap=EDGE_MAP_TEST if training_stage==1 else DEFORMED_MAP_TEST,
                 netG=netG,
                 show=False,
                 save=True,
