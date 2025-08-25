@@ -254,6 +254,7 @@ class VGG16Decoder(nn.Module):
         skip3 = torch.cat([edge_skips[2], blur_skips[2]], dim=1); skip3 = self.fuse_skip3(skip3)
         x = self.unpool3(x, edge_feats["idx3"], output_size=edge_feats["size3"])
         x = self.dec3(x + skip3)
+        # x = self.dec3(x + edge_skips[2])
 
         # 2.1: concatenate edge and blur skips of step 2 and fuse them
         # 2.2: 128x64x64 FeatMap -> Unpooling ->128x128x128 FeatMap
@@ -261,12 +262,15 @@ class VGG16Decoder(nn.Module):
         skip2 = torch.cat([edge_skips[1], blur_skips[1]], dim=1); skip2 = self.fuse_skip2(skip2)
         x = self.unpool2(x, edge_feats["idx2"], output_size=edge_feats["size2"])
         x = self.dec2(x + skip2)
+        # x = self.dec2(x + edge_skips[1])
 
         # 1.1: concatenate edge and blur skips of step 1 and fuse them
         # 1.2: 64x128x128 FeatMap -> Unpooling -> 64x256x256 FeatMap
         # 1.3: 64x256x256 FeatMap -> Conv -> InstNorm -> ReLu -> Conv -> InstNorm -> ReLu -> 64x256x256 FeatMap
         skip1 = torch.cat([edge_skips[0], blur_skips[0]], dim=1); skip1 = self.fuse_skip1(skip1)
-        x = self.unpool1(x, edge_feats["idx1"], output_size=edge_feats["size1"]); x = self.dec1(x + skip1)
+        x = self.unpool1(x, edge_feats["idx1"], output_size=edge_feats["size1"]);
+        x = self.dec1(x + skip1)
+        # x = self.dec1(x)
 
         # 0.1: 64x256x256 FeatMap -> Conv -> 3x256x256 Img
         # 0.2: 3x256x256 Img -> tanh -> 3x256x256 Img
