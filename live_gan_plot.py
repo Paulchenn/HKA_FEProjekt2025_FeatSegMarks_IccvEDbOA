@@ -124,7 +124,7 @@ def on_key(event):
 
 # === Setup ===
 fig, axs = plt.subplots(2, 2, figsize=(8.5, 6))
-fig.suptitle("GAN Training & Validation Losses (press 'r' to reload, 'q' to quit)")
+fig.suptitle("GAN Training & Validation Losses (press 'c' to clear, 'r' to reload, 'q' to quit)")
 
 plot_gan_logs(axs, result_dir)
 fig.canvas.mpl_connect('key_press_event', on_key)
