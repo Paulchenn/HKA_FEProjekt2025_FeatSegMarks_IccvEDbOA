@@ -5,29 +5,31 @@
 
   "show_imgEmseTsd": false,
   "show_tsg": true,
-  "show_images_interval": 10000000,
+  "show_images_interval": 1000,
+
+  "start_in_stage": 1,
 
   "save_path": "./Result",
 
   "log_interval": 10,
 
   "device": "cuda",
-  "batch_size": 10,
+  "batch_size": 16,
   "epochs": 999,
-  "patience_stage1": 20,
+  "patience_stage1": 10,
   "patience_stage2": 30,
 
-  "path_tuned_D": "f./Result/20250821_153022/ImageNet256/tuned_netD/netD__stage1__Epoch_001.pth",
-  "path_optim_D_stage1": "f./Result/20250821_153022/ImageNet256/tuned_optimD/optimD__stage1__Epoch_001.pth",
-  "path_optim_D_stage2": "f./Result/20250821_153022/ImageNet256/tuned_optimD/optimD__stage2__Epoch_001.pth",
+  "path_tuned_D": "f./Result/20250821_163030/ImageNet256/best_netD/netD__stage1__Epoch_021.pth",
+  "path_optim_D_stage1": "f./Result/20250821_163030/ImageNet256/best_optimD/optimD__stage1__Epoch_021.pth",
+  "path_optim_D_stage2": "f./Result/20250821_163030/ImageNet256/best_optimD/optimD__stage2__Epoch_021.pth",
 
-  "path_tuned_G": "f./Result/20250821_153022/ImageNet256/tuned_netG/netG__stage1__Epoch_001.pth",
-  "path_optim_G_stage1": "f./Result/20250821_153022/ImageNet256/tuned_optimG/optimG__stage1__Epoch_001.pth",
-  "path_optim_G_stage2": "f./Result/20250821_153022/ImageNet256/tuned_optimG/optimG__stage2__Epoch_001.pth",
+  "path_tuned_G": "f./Result/20250821_163030/ImageNet256/best_netG/netG__stage1__Epoch_021.pth",
+  "path_optim_G_stage1": "f./Result/20250821_163030/ImageNet256/best_optimG/optimG__stage1__Epoch_021.pth",
+  "path_optim_G_stage2": "f./Result/20250821_163030/ImageNet256/best_optimG/optimG__stage2__Epoch_021.pth",
 
-  "train_with_cls": true,
+  "train_with_cls": false,
 
-  "downSize": 128,
+  "downSize": 96,
 
   "learning_rate": {
     "discriminator_stage1": 1e-5,
@@ -40,12 +42,13 @@
     "lambda_stage1_l1": 5.0,
     "lambda_stage1_GAN": 1.0,
     "lambda_stage1_CE": 0.5,
+    "lambda_stage1_edge": 2.5,
 
-    "lambda_stage2_l1": 5.0,
+    "lambda_stage2_l1": 1,
     "lambda_stage2_GAN": 1.0,
     "lambda_stage2_CE": 0.5,
-    "lambda_stage2_cls": 1.0,
-    "lambda_stage2_edge": 4.0
+    "lambda_stage2_cls": 0.05,
+    "lambda_stage2_edge": 5
   },
 
   "image_size": 256,
@@ -86,7 +89,9 @@
       "26": "barometer",
       "27": "barrel",
       "28": "barrow",
-      "29": "bassinet",
+      "29": "bassinet"
+    },
+    "spare_synsets_2": {
       "30": "bassoon",
       "31": "bath_towel",
       "32": "bathing_cap",
@@ -156,8 +161,6 @@
       "96": "corkscrew",
       "97": "corn",
       "98": "cornet"
-    },
-    "spare_synsets_2": {
     }
   }
 }
