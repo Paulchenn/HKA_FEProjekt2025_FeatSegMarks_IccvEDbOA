@@ -7,6 +7,9 @@ import torch
 
 import torchvision.models as torch_models
 
+# import tkinter as tk
+# from tkinter import messagebox
+
 from collections import deque
 from datetime import datetime
 from models import generation_imageNet_V2_2 as generation_imageNet
@@ -208,7 +211,7 @@ if __name__ == "__main__":
         }
         skipped = [k for k in checkpoint if k not in filtered_dict]
         if skipped:
-            print(f"Not loaded Layer (due to conflicts in name and dimension):")
+            print(f"Not loaded Layer of NetG (due to conflicts in name and dimension):")
             for k in skipped:
                 print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape})")
         model_dict.update(filtered_dict)
@@ -224,7 +227,7 @@ if __name__ == "__main__":
         }
         skipped = [k for k in checkpoint if k not in filtered_dict]
         if skipped:
-            print(f"Not loaded Layer (due to conflicts in name and dimension):")
+            print(f"Not loaded Layer of NetD (due to conflicts in name and dimension):")
             for k in skipped:
                 print(f"  - {k}  (Checkpoint shape: {checkpoint[k].shape}, Model shape: {model_dict.get(k, 'missing')})")
         model_dict.update(filtered_dict)
@@ -350,9 +353,18 @@ if __name__ == "__main__":
    
     ##### ===== TRAINING ===== #####
     # === start training in stage 1 ===
-    training_stage = 1
+    if config.start_in_stage == 2:
+        print("")
+        print("")
+        print("*******************************")
+        print("!!!!! STARTING IN STAGE 2 !!!!!")
+        print("*******************************")
+        # tk.Tk().withdraw(); messagebox.showinfo("!!!!! STARTING IN STAGE 2 !!!!!", "Go on?");  # optional: tk._default_root.destroy()
+
+    training_stage = config.start_in_stage
     best_val_loss = None
     counter_noBetterValLoss = 0
+    # pdb.set_trace()
     for epoch in range(config.EPOCHS):
         print("")
         print("")
@@ -429,6 +441,7 @@ if __name__ == "__main__":
                 netD, netG, optimD_stage1, optimG_stage1, loss, time_TSG = tsg.doTSG_stage1_training(
                     iteration=i,
                     config=config,
+                    emse=emse,
                     img=img,
                     label=label,
                     e_extend=edgeMap,
@@ -585,6 +598,7 @@ if __name__ == "__main__":
             if training_stage==1:
                 loss = tsg.doTSG_stage1_testing(
                     config=config,
+                    emse=emse,
                     img=img,
                     label=label,
                     e_extend=edgeMap,
@@ -707,6 +721,7 @@ if __name__ == "__main__":
                 else:
                     optimD_best = optimD_stage2
                     optimG_best = optimG_stage2
+                epoch_best = epoch
                 counter_noBetterValLoss = 0
             else:
                 counter_noBetterValLoss += 1
@@ -717,7 +732,7 @@ if __name__ == "__main__":
                             config=config,
                             training_stage=training_stage,
                             state='best',
-                            epoch=epoch,
+                            epoch=epoch_best,
                             netD=netD_best,
                             optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
                             optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
@@ -738,7 +753,7 @@ if __name__ == "__main__":
                             config=config,
                             training_stage=training_stage,
                             state='best',
-                            epoch=epoch,
+                            epoch=epoch_best,
                             netD=netD_best,
                             optimD_s1=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage
                             optimD_s2=optimD_best,  # giving both times best, because function will save it to the correct place due to training_stage

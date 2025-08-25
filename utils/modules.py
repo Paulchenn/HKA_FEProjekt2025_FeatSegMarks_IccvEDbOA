@@ -244,6 +244,7 @@ class TSG:
         self,
         iteration,
         config,
+        emse,
         img,
         label,
         e_extend,
@@ -303,6 +304,10 @@ class TSG:
         time_startTrainG1 = time.time()
 
         with autocast_ctx:
+            # === Edge preservation loss (Ledge) ===
+            e_extend_G_rough = emse.doEMSE(G_rough.detach())
+            edge_loss = L1_loss(e_extend_G_rough, e_extend)
+
             # call discriminator again due to inplace-error
             D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
             D_result_roughImg = D_result_roughImg.mean()
@@ -315,10 +320,12 @@ class TSG:
             lambda_L1 = config.LAMBDA_S1_L1 # original: 1.0
             lamda_GAN = config.LAMBDA_S1_GAN # original: 1.0
             lambda_CE = config.LAMBDA_S1_CE # original: 0.5
+            lambda_edge = config.LAMBDA_S1_EDGE
             loss.G_loss = (
                 lambda_L1 * G_L1_loss_rough
                 - lamda_GAN * D_result_roughImg
                 + lambda_CE * G_celoss_rough
+                + lambda_edge * edge_loss
             )
 
         netG.zero_grad()
@@ -422,7 +429,7 @@ class TSG:
 
             # === Edge preservation loss (Ledge) ===
             e_extend_G_fine = emse.doEMSE(G_fine.detach())
-            edge_loss_2 = L1_loss(e_extend_G_fine, e_deformed)
+            edge_loss = L1_loss(e_extend_G_fine, e_deformed)
 
             # === Generator loss ===
             # call discriminator again due to inplace-error
@@ -443,7 +450,7 @@ class TSG:
                 - lamda_GAN * D_result_fineImg
                 + lambda_CE * G_celoss_fine
                 + lambda_cls * loss.cls_loss
-                + lambda_edge * edge_loss_2
+                + lambda_edge * edge_loss
             )
 
         netG.zero_grad()
@@ -473,6 +480,7 @@ class TSG:
     def doTSG_stage1_testing(
         self,
         config,
+        emse,
         img,
         label,
         e_extend,
@@ -518,6 +526,10 @@ class TSG:
 
             # === Stage 2: Step 3: Generator validation ===
             with autocast_ctx:
+                # === Edge preservation loss (Ledge) ===
+                e_extend_G_rough = emse.doEMSE(G_rough.detach())
+                edge_loss = L1_loss(e_extend_G_rough, e_extend)
+                
                 img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
                 G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
                 G_celoss_rough = CE_loss(aux_output_roughImg, label).sum()
@@ -526,10 +538,12 @@ class TSG:
                 lambda_L1 = config.LAMBDA_S1_L1 # original: 1.0
                 lamda_GAN = config.LAMBDA_S1_GAN # original: 1.0
                 lambda_CE = config.LAMBDA_S1_CE # original: 0.5
+                lambda_edge = config.LAMBDA_S1_EDGE
                 loss.G_loss = (
                     lambda_L1 * G_L1_loss_rough
                     - lamda_GAN * D_result_roughImg
                     + lambda_CE * G_celoss_rough
+                    + lambda_edge * edge_loss
                 )
 
             return loss
@@ -598,7 +612,7 @@ class TSG:
 
                 # === Edge preservation loss (Ledge) ===
                 emse_G_fine = emse.doEMSE(G_fine.detach())
-                edge_loss_2 = L1_loss(emse_G_fine, e_deformed)
+                edge_loss = L1_loss(emse_G_fine, e_deformed)
 
                 # === Generator loss ===
                 img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
@@ -616,7 +630,7 @@ class TSG:
                     - lamda_GAN * D_result_fineImg
                     + lambda_CE * G_celoss_fine
                     + lambda_cls * loss.cls_loss
-                    + lambda_edge * edge_loss_2
+                    + lambda_edge * edge_loss
                 )
 
             return loss, cls_prediction

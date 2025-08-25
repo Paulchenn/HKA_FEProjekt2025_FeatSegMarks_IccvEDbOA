@@ -109,6 +109,8 @@ def get_config(file_path):
     config["LAMBDA_S1_L1"]      = config["loss_weights"]["lambda_stage1_l1"]
     config["LAMBDA_S1_GAN"]     = config["loss_weights"]["lambda_stage1_GAN"]
     config["LAMBDA_S1_CE"]      = config["loss_weights"]["lambda_stage1_CE"]
+    config["LAMBDA_S1_EDGE"]    = config["loss_weights"]["lambda_stage1_edge"]
+
     config["LAMBDA_S2_L1"]      = config["loss_weights"]["lambda_stage2_l1"]
     config["LAMBDA_S2_GAN"]     = config["loss_weights"]["lambda_stage2_GAN"]
     config["LAMBDA_S2_CE"]      = config["loss_weights"]["lambda_stage2_CE"]
