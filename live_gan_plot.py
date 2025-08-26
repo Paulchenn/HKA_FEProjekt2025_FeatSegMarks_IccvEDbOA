@@ -129,7 +129,3 @@ fig.suptitle("GAN Training & Validation Losses (press 'c' to clear, 'r' to reloa
 plot_gan_logs(axs, result_dir)
 fig.canvas.mpl_connect('key_press_event', on_key)
 plt.show()
-
-while(1):
-    kb = Controller()
-    kb.press('r'); kb.release('r')
