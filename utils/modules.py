@@ -425,6 +425,8 @@ class TSG:
                 loss.cls_loss = CE_loss(cls_output, label)
             else:
                 loss.cls_loss = torch.tensor(0.0).to(config.DEVICE)
+                G_fine_resized = None
+                G_fine_norm = None
             time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
 
             # === Edge preservation loss (Ledge) ===
