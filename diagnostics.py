@@ -8,16 +8,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 
-# --- Dein Projekt: Imports (Generator, Config, Loader, TIMSE) ---
+# --- Dein Projekt: Imports (Generator, Config, Loader, DS_EMSE) ---
 from utils.helpers import get_config, get_train_val_loaders
 from models import generation_imageNet_V2_2 as generation_imageNet
 
-# TIMSE ist optional – wenn Import scheitert, nutzen wir einen Sobel-Backup
+# DS_EMSE ist optional – wenn Import scheitert, nutzen wir einen Sobel-Backup
 try:
-    from utils.modules import TIMSE  # erwartet: timse = TIMSE(config); timse.diff_edge_map(img)
-    HAS_TIMSE = True
+    from utils.modules import DS_EMSE  # erwartet: ds_emse = DS_EMSE(config); ds_emse.diff_edge_map(img)
+    HAS_DS_EMSE = True
 except Exception:
-    HAS_TIMSE = False
+    HAS_DS_EMSE = False
 
 
 # ------------------------------
@@ -174,10 +174,10 @@ def ablation_tests(netG, z, E, I_txt, loss_fn: EdgeTextureDiagLoss):
 # -----------------------------------------
 # Build E (Edge) und I_txt (blur) pro Batch
 # -----------------------------------------
-def build_E_and_I(config, img, timse_obj: Optional[Any]):
-    # E: bevorzugt TIMSE; Fallback Sobel
-    if timse_obj is not None:
-        E = timse_obj.diff_edge_map(img)
+def build_E_and_I(config, img, tds_emse_obj: Optional[Any]):
+    # E: bevorzugt DS_EMSE; Fallback Sobel
+    if ds_emse_obj is not None:
+        E = ds_emse_obj.diff_edge_map(img)
     else:
         # Sobel auf img (als Pseudo-Edge)
         sob = SobelEdges().to(img.device)
@@ -263,12 +263,12 @@ def run_diagnostics(
         netG.load_state_dict(model_dict)
         print(f"Loaded netG weights from: {ckpt_guess}")
 
-    # TIMSe optional vorbereiten
-    timse_obj = TIMSE(config=cfg) if HAS_TIMSE else None
-    if HAS_TIMSE:
-        print("[Diag] TIMSE verfügbar – nutze TIMSE.diff_edge_map(img) als Edge-Target.")
+    # DS_EMSE optional vorbereiten
+    ds_emse_obj = DS_EMSE(config=cfg) if HAS_DS_EMSE else None
+    if HAS_DS_EMSE:
+        print("[Diag] DS_EMSE verfügbar – nutze DS_EMSE.diff_edge_map(img) als Edge-Target.")
     else:
-        print("[Diag] TIMSE nicht gefunden – fallback auf Sobel-Edges als Edge-Target.")
+        print("[Diag] DS_EMSE nicht gefunden – fallback auf Sobel-Edges als Edge-Target.")
 
     # Loss
     loss_fn = EdgeTextureDiagLoss(w_edge=1.0, w_tex=1.0).to(device)
@@ -284,7 +284,7 @@ def run_diagnostics(
         img = img.to(device, non_blocking=True)
 
         # Inputs bauen
-        E, I_txt = build_E_and_I(cfg, img, timse_obj=timse_obj)
+        E, I_txt = build_E_and_I(cfg, img, ds_emse_obj=ds_emse_obj)
         z = fixed_noise(img.shape[0], cfg.NOISE_SIZE, device, seed=seed + it)
 
         # Ablation (ohne Grad)

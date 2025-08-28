@@ -150,7 +150,7 @@ if __name__ == "__main__":
 
 
     # === Initialize Trainiingclasses ===
-    timse   = TIMSE(config=config)   # Initialize EMSE class
+    ds_emse   = DS_EMSE(config=config)   # Initialize EMSE class
     emse    = EMSE(config=config)    # Initialize EMSE class
     tsd     = TSD(config=config)     # Initialize TSD class
     tsg     = TSG(config=config)     # Initialize TSG class
@@ -317,11 +317,11 @@ if __name__ == "__main__":
 
         # === EMSE >>>
         EDGE_MAP_TEST_EMSE = emse.doEMSE(img)
-        EDGE_MAP_TEST_TIMSE = timse.diff_edge_map(img)
+        EDGE_MAP_TEST_DS_EMSE = ds_emse.diff_edge_map(img)
         # <<< EMSE ===
 
         # === TSD >>>
-        DEFORMED_MAP_TEST = tsd.doTSD(EDGE_MAP_TEST_TIMSE)
+        DEFORMED_MAP_TEST = tsd.doTSD(EDGE_MAP_TEST_DS_EMSE)
         # <<< TSD ===
 
         # === Show images depending on configuration ===
@@ -329,7 +329,7 @@ if __name__ == "__main__":
             config=config,
             num_epoch=-1,
             img=IMG,
-            edgeMap=EDGE_MAP_TEST_TIMSE,
+            edgeMap=EDGE_MAP_TEST_DS_EMSE,
             path=path2save_epochImg,
             print_original=True,
             netG=netG,
@@ -362,6 +362,7 @@ if __name__ == "__main__":
         print("!!!!! STARTING IN STAGE 2 !!!!!")
         print("*******************************")
         # tk.Tk().withdraw(); messagebox.showinfo("!!!!! STARTING IN STAGE 2 !!!!!", "Go on?");  # optional: tk._default_root.destroy()
+
 
     training_stage = config.start_in_stage
     best_val_loss = None
@@ -397,7 +398,7 @@ if __name__ == "__main__":
         # Initialize time lists
         time_Iteration = []  # Start time for iteration
         time_EMSE = []
-        time_TIMSE = []
+        time_DS_EMSE = []
         time_TSD = []
         time_TSG = type('TimeTSG', (object,), {})()  # Create a simple object to hold TSG times
         time_TSG.time_trainD = []
@@ -424,11 +425,11 @@ if __name__ == "__main__":
             time_EMSE.append(time.time() - time_startEMSE)
             # <<< EMSE ===
 
-            # === TIMSE >>>
-            time_startTIMSE = time.time()
-            edgeMap = timse.diff_edge_map(img)
-            time_TIMSE.append(time.time() - time_startTIMSE)
-            # <<< TIMSE ===
+            # === DS_EMSE >>>
+            time_startDS_EMSE = time.time()
+            edgeMap = ds_emse.diff_edge_map(img)
+            time_DS_EMSE.append(time.time() - time_startDS_EMSE)
+            # <<< DS_EMSE ===
 
             # === TSD >>>
             time_startTSD = time.time()
@@ -450,7 +451,7 @@ if __name__ == "__main__":
                 netD, netG, optimD_stage1, optimG_stage1, loss, time_TSG = tsg.doTSG_stage1_training(
                     iteration=i,
                     config=config,
-                    timse=timse,
+                    ds_emse=ds_emse,
                     emse=emse,
                     img=img,
                     label=label,
@@ -468,7 +469,7 @@ if __name__ == "__main__":
                 netD, netG, optimD_stage2, optimG_stage2, loss, time_TSG = tsg.doTSG_stage2_training(
                     iteration=i,
                     config=config,
-                    timse=timse,
+                    ds_emse=ds_emse,
                     emse=emse,
                     img=img,
                     label=label,
@@ -537,7 +538,7 @@ if __name__ == "__main__":
                 config=config,
                 num_epoch=epoch,
                 img=IMG,
-                edgeMap=EDGE_MAP_TEST_TIMSE if training_stage==1 else DEFORMED_MAP_TEST,
+                edgeMap=EDGE_MAP_TEST_DS_EMSE if training_stage==1 else DEFORMED_MAP_TEST,
                 netG=netG,
                 show=False,
                 save=True,
@@ -598,11 +599,11 @@ if __name__ == "__main__":
             time_emse = time.time()-time_startEmse
             # <<< EMSE ===
 
-            # === TIMSE >>>
-            time_startTimse = time.time()
-            edgeMap = timse.diff_edge_map(img)
-            time_timse = time.time() - time_startTimse
-            # <<< TIMSE ===
+            # === DS_EMSE >>>
+            time_startDS_EMSE = time.time()
+            edgeMap = ds_emse.diff_edge_map(img)
+            time_DS_EMSE = time.time() - time_startDS_EMSE
+            # <<< DS_EMSE ===
 
             # === TSD >>>
             time_startTsd = time.time()
@@ -616,7 +617,7 @@ if __name__ == "__main__":
             if training_stage==1:
                 loss = tsg.doTSG_stage1_testing(
                     config=config,
-                    timse=timse,
+                    ds_emse=ds_emse,
                     emse=emse,
                     img=img,
                     label=label,
@@ -629,7 +630,7 @@ if __name__ == "__main__":
             else:
                 loss, cls_prediction = tsg.doTSG_stage2_testing(
                     config=config,
-                    timse=timse,
+                    ds_emse=ds_emse,
                     emse=emse,
                     img=img,
                     label=label,

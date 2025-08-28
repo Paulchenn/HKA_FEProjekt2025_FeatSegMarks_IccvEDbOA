@@ -21,9 +21,9 @@ from torchvision import transforms
 from torch import amp
 
 
-class TIMSE:
+class DS_EMSE:
     """
-    Tim-based shape encoding (TIMSE)
+    Tim-based shape encoding (DS_EMSE)
     """
 
     def __init__(self, config):
@@ -292,7 +292,7 @@ class TSG:
         self,
         iteration,
         config,
-        timse,
+        ds_emse,
         emse,
         img,
         label,
@@ -369,7 +369,7 @@ class TSG:
 
         with autocast_ctx:
             # === Edge preservation loss (Ledge) ===
-            e_extend_G_rough = timse.diff_edge_map(G_rough)                          # [B,1,H,W]
+            e_extend_G_rough = ds_emse.diff_edge_map(G_rough)                          # [B,1,H,W]
             # e_extend_G_rough = emse.doEMSE(G_rough.detach())
             edge_loss = L1_loss(e_extend_G_rough, e_extend)
 
@@ -422,7 +422,7 @@ class TSG:
         self,
         iteration,
         config,
-        timse,
+        ds_emse,
         emse,
         img,
         label,
@@ -499,7 +499,7 @@ class TSG:
             time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
 
             # === Edge preservation loss (Ledge) ===
-            e_extend_G_fine = timse.diff_edge_map(G_fine)                          # [B,1,H,W]
+            e_extend_G_fine = ds_emse.diff_edge_map(G_fine)                          # [B,1,H,W]
             # e_extend_G_rough = emse.doEMSE(G_rough.detach())
             edge_loss = L1_loss(e_extend_G_fine, e_deformed)
 
@@ -555,7 +555,7 @@ class TSG:
     def doTSG_stage1_testing(
         self,
         config,
-        timse,
+        ds_emse,
         emse,
         img,
         label,
@@ -603,7 +603,7 @@ class TSG:
             # === Stage 2: Step 3: Generator validation ===
             with autocast_ctx:
                 # === Edge preservation loss (Ledge) ===
-                e_extend_G_rough = timse.diff_edge_map(G_rough)                          # [B,1,H,W]
+                e_extend_G_rough = ds_emse.diff_edge_map(G_rough)                          # [B,1,H,W]
                 # e_extend_G_rough = emse.doEMSE(G_rough.detach())
                 edge_loss = L1_loss(e_extend_G_rough, e_extend)
 
@@ -632,7 +632,7 @@ class TSG:
     def doTSG_stage2_testing(
         self,
         config,
-        timse,
+        ds_emse,
         emse,
         img,
         label,
@@ -696,7 +696,7 @@ class TSG:
                     cls_prediction = None
 
                 # === Edge preservation loss (Ledge) ===
-                e_extend_G_fine = timse.diff_edge_map(G_fine)                          # [B,1,H,W]
+                e_extend_G_fine = ds_emse.diff_edge_map(G_fine)                          # [B,1,H,W]
                 # e_extend_G_rough = emse.doEMSE(G_rough.detach())
                 edge_loss = L1_loss(e_extend_G_fine, e_extend)
 
