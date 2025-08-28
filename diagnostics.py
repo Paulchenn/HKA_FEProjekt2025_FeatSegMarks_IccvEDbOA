@@ -2,20 +2,22 @@
 import os, json, argparse, math, time
 from typing import Optional, Dict, Any
 
+import pdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import transforms
 
-# --- Dein Projekt: Imports (Generator, Config, Loader, EMSE) ---
+# --- Dein Projekt: Imports (Generator, Config, Loader, TIMSE) ---
 from utils.helpers import get_config, get_train_val_loaders
 from models import generation_imageNet_V2_2 as generation_imageNet
 
-# EMSE ist optional – wenn Import scheitert, nutzen wir einen Sobel-Backup
+# TIMSE ist optional – wenn Import scheitert, nutzen wir einen Sobel-Backup
 try:
-    from utils.modules import EMSE  # erwartet: emse = EMSE(config); emse.doEMSE(img)
-    HAS_EMSE = True
+    from utils.modules import TIMSE  # erwartet: timse = TIMSE(config); timse.diff_edge_map(img)
+    HAS_TIMSE = True
 except Exception:
-    HAS_EMSE = False
+    HAS_TIMSE = False
 
 
 # ------------------------------
@@ -103,7 +105,9 @@ class EdgeTextureDiagLoss(nn.Module):
     def forward(self, out_img, E_target, I_txt):
         L_e = self.edge_loss(out_img, E_target) if self.w_edge > 0 else 0.0 * out_img.mean()
         L_t = self.tex_loss(out_img, I_txt)    if self.w_tex > 0 else 0.0 * out_img.mean()
-        return self.w_edge * L_e + self.w_tex * L_t, L_e.detach(), L_t.detach()
+        # WICHTIG: NICHT detachen – wir brauchen den Graph für autograd.grad(...)
+        return self.w_edge * L_e + self.w_tex * L_t, L_e, L_t
+
 
 
 # -----------------------------------------
@@ -170,10 +174,10 @@ def ablation_tests(netG, z, E, I_txt, loss_fn: EdgeTextureDiagLoss):
 # -----------------------------------------
 # Build E (Edge) und I_txt (blur) pro Batch
 # -----------------------------------------
-def build_E_and_I(config, img, emse_obj: Optional[Any]):
-    # E: bevorzugt EMSE; Fallback Sobel
-    if emse_obj is not None:
-        E = emse_obj.doEMSE(img)
+def build_E_and_I(config, img, timse_obj: Optional[Any]):
+    # E: bevorzugt TIMSE; Fallback Sobel
+    if timse_obj is not None:
+        E = timse_obj.diff_edge_map(img)
     else:
         # Sobel auf img (als Pseudo-Edge)
         sob = SobelEdges().to(img.device)
@@ -200,22 +204,47 @@ def run_diagnostics(
     cfg = get_config(config_path)
     device = cfg.DEVICE
 
-    # Ausgabeverzeichnis
-    save_root = save_dir_override or getattr(cfg, "SAVE_PATH", "./Result")
-    out_dir = os.path.join(save_root, "diagnostics")
+    # Ausgabeverzeichnis direkt relativ zum --ckpt wählen:
+    #   ./Result/<RUN_ID>/diagnostics/
+    if save_dir_override:
+        out_dir = os.path.join(save_dir_override, "diagnostics")
+    else:
+        ckpt_path_abs = os.path.abspath(args.ckpt)  # z.B. ./Result/20250826_193108/ImageNet256/tuned_netG/netG__stage1__Epoch_023.pth
+        ckpt_dir = os.path.dirname(ckpt_path_abs)   # .../ImageNet256/tuned_netG
+        # Zwei Ebenen hoch: .../20250826_193108
+        run_root = os.path.abspath(os.path.join(ckpt_dir, os.pardir, os.pardir))
+        out_dir = os.path.join(run_root, "diagnostics")
+
     os.makedirs(out_dir, exist_ok=True)
 
-    # Loader aufsetzen (wir brauchen nur val default)
-    transform_train = None  # wird in get_train_val_loaders intern gesetzt
-    transform_val = None
+
+    # Loader aufsetzen – benutze die gleichen Transforms wie im Training
+    transform_train = transforms.Compose([
+        transforms.Resize(cfg.IMG_SIZE),
+        transforms.CenterCrop(cfg.IMG_SIZE),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+    transform_val = transforms.Compose([
+        transforms.Resize(cfg.IMG_SIZE),
+        transforms.CenterCrop(cfg.IMG_SIZE),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+
+    # Tilde im Pfad sicher expandieren
+    data_dir = os.path.expanduser(cfg.DATASET_PATH)
+
     train_loader, val_loader = get_train_val_loaders(
         cfg,
-        data_dir=cfg.DATASET_PATH,
-        transform_train=torch.nn.Identity(),   # Placeholders (werden überschrieben)
-        transform_val=torch.nn.Identity(),     # durch die Funktion
+        data_dir=data_dir,
+        transform_train=transform_train,
+        transform_val=transform_val,
         pin_memory=True
     )
     loader = val_loader if split == "val" else train_loader
+
 
     # Generator
     netG = generation_imageNet.generator(img_size=cfg.IMG_SIZE, z_dim=cfg.NOISE_SIZE).to(device)
@@ -234,12 +263,12 @@ def run_diagnostics(
         netG.load_state_dict(model_dict)
         print(f"Loaded netG weights from: {ckpt_guess}")
 
-    # EMSE optional vorbereiten
-    emse_obj = EMSE(config=cfg) if HAS_EMSE else None
-    if HAS_EMSE:
-        print("[Diag] EMSE verfügbar – nutze EMSE.doEMSE(img) als Edge-Target.")
+    # TIMSe optional vorbereiten
+    timse_obj = TIMSE(config=cfg) if HAS_TIMSE else None
+    if HAS_TIMSE:
+        print("[Diag] TIMSE verfügbar – nutze TIMSE.diff_edge_map(img) als Edge-Target.")
     else:
-        print("[Diag] EMSE nicht gefunden – fallback auf Sobel-Edges als Edge-Target.")
+        print("[Diag] TIMSE nicht gefunden – fallback auf Sobel-Edges als Edge-Target.")
 
     # Loss
     loss_fn = EdgeTextureDiagLoss(w_edge=1.0, w_tex=1.0).to(device)
@@ -255,7 +284,7 @@ def run_diagnostics(
         img = img.to(device, non_blocking=True)
 
         # Inputs bauen
-        E, I_txt = build_E_and_I(cfg, img, emse_obj=emse_obj)
+        E, I_txt = build_E_and_I(cfg, img, timse_obj=timse_obj)
         z = fixed_noise(img.shape[0], cfg.NOISE_SIZE, device, seed=seed + it)
 
         # Ablation (ohne Grad)
@@ -284,12 +313,17 @@ def run_diagnostics(
     denom = (mean_stats["||dL_edge/dI||"] + 1e-12)
     mean_stats["grad_ratio_edge_E_over_I"] = float(mean_stats["||dL_edge/dE||"] / denom)
 
-    # Speichern
-    out_json = os.path.join(out_dir, "edge_usage_summary.json")
+    # Speichern unter: ./Result/<RUN_ID>/diagnostics/diagnostic__<CKPT_STEM>.json
+    # Beispiel: diagnostic__netG__stage1__Epoch_023.json
+    ckpt_stem = os.path.splitext(os.path.basename(args.ckpt))[0]
+    out_json = os.path.join(out_dir, f"diagnostic__{ckpt_stem}.json")
+
     with open(out_json, "w") as f:
         json.dump({"per_batch": agg, "mean": mean_stats}, f, indent=2)
-    print(f"\n[Diag] Zusammenfassung gespeichert: {os.path.abspath(out_json)}")
+
+    print(f"\n[Diag] Zusammenfassung gespeichert: {out_json}")
     print(json.dumps(mean_stats, indent=2))
+
 
     # Kurze Interpretation in Textform
     print("\n[Diag] Interpretation (Daumenregel):")
@@ -316,6 +350,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    #pdb.set_trace()
     run_diagnostics(
         config_path=args.config,
         ckpt_path=args.ckpt,

@@ -1,11 +1,11 @@
 {
   "debug_mode": false,
   "debugIterations_strt": 0,
-  "debugIterations_amount": 20,
+  "debugIterations_amount": 10,
 
   "show_imgEmseTsd": false,
   "show_tsg": true,
-  "show_images_interval": 1000,
+  "show_images_interval": 50,
 
   "start_in_stage": 1,
 
@@ -16,39 +16,46 @@
   "device": "cuda",
   "batch_size": 16,
   "epochs": 999,
-  "patience_stage1": 10,
+  "patience_stage1": 30,
   "patience_stage2": 30,
 
-  "path_tuned_D": "f./Result/20250821_163030/ImageNet256/best_netD/netD__stage1__Epoch_021.pth",
-  "path_optim_D_stage1": "f./Result/20250821_163030/ImageNet256/best_optimD/optimD__stage1__Epoch_021.pth",
-  "path_optim_D_stage2": "f./Result/20250821_163030/ImageNet256/best_optimD/optimD__stage2__Epoch_021.pth",
+  "path_tuned_D": "f./Result/20250825_161117/ImageNet256/best_netD/netD__stage1__Epoch_009.pth",
+  "path_optim_D_stage1": "f./Result/20250825_161117/ImageNet256/best_optimD/optimD__stage1__Epoch_009.pth",
+  "path_optim_D_stage2": "f./Result/20250825_161117/ImageNet256/best_optimD/optimD__stage2__Epoch_009.pth",
 
-  "path_tuned_G": "f./Result/20250821_163030/ImageNet256/best_netG/netG__stage1__Epoch_021.pth",
-  "path_optim_G_stage1": "f./Result/20250821_163030/ImageNet256/best_optimG/optimG__stage1__Epoch_021.pth",
-  "path_optim_G_stage2": "f./Result/20250821_163030/ImageNet256/best_optimG/optimG__stage2__Epoch_021.pth",
+  "path_tuned_G": "f./Result/20250825_161117/ImageNet256/best_netG/netG__stage1__Epoch_009.pth",
+  "path_optim_G_stage1": "f./Result/20250825_161117/ImageNet256/best_optimG/optimG__stage1__Epoch_009.pth",
+  "path_optim_G_stage2": "f./Result/20250825_161117/ImageNet256/best_optimG/optimG__stage2__Epoch_009.pth",
 
   "train_with_cls": false,
 
-  "downSize": 96,
+  "downSize": 128,
 
-  "learning_rate": {
-    "discriminator_stage1": 1e-5,
-    "discriminator_stage2": 1e-5,
-    "generator_stage1": 1e-4,
-    "generator_stage2": 1e-4
-  },
+  "tex_dropout_s1": true,
+  "texD_p_zero": 0.20,
+  "texD_p_heavy": 0.50,
+  "texD_heavy_down": 12,
+  "texD_down_min": 96,
+  "texD_down_max": 160,
 
   "loss_weights": {
-    "lambda_stage1_l1": 5.0,
+    "lambda_stage1_l1": 6.0,
+    "lambda_stage1_edge": 1.5,
     "lambda_stage1_GAN": 1.0,
     "lambda_stage1_CE": 0.5,
-    "lambda_stage1_edge": 2.5,
 
-    "lambda_stage2_l1": 1,
+    "lambda_stage2_l1": 2.0,
+    "lambda_stage2_edge": 3.0,
     "lambda_stage2_GAN": 1.0,
     "lambda_stage2_CE": 0.5,
-    "lambda_stage2_cls": 0.05,
-    "lambda_stage2_edge": 5
+    "lambda_stage2_cls": 0.05
+  },
+
+  "learning_rate": {
+    "discriminator_stage1": 1e-6,
+    "generator_stage1": 5e-5,
+    "discriminator_stage2": 1e-6,
+    "generator_stage2": 5e-5
   },
 
   "image_size": 256,
@@ -58,8 +65,6 @@
     "name": "ImageNet256",
     "path": "~/torch/data/ImageNet256",
     "spare_synsets_1": {
-    },
-    "SELECTED_SYNSETS": {
       "0": "abacus",
       "1": "academic_gown",
       "2": "accordion",
@@ -140,7 +145,9 @@
       "75": "chain",
       "76": "chain_mail",
       "77": "chain_saw",
-      "78": "chest",
+      "78": "chest"
+    },
+    "SELECTED_SYNSETS": {
       "79": "chiffonier",
       "80": "chime",
       "81": "china_cabinet",

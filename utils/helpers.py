@@ -52,6 +52,46 @@ def blur_image(
 
     return upsampled
 
+def blur_image_dynamic(
+    img,
+    down_min=64,
+    down_max=128,
+    p_heavy=0.35,
+    heavy_down=12,
+    p_zero=0.15,
+    noise_std=0.0,
+):
+    """
+    Dynamisches Blur für I_txt:
+      - mit p_heavy sehr starkes Blur (heavy_down),
+      - sonst zufälliges Blur in [down_min, down_max],
+      - mit p_zero komplettes Blackout (I_txt = 0),
+      - optional leichtes Gauss-Rauschen nach dem Blur.
+    Erwartet Batch-Tensor im Range (-1..1), gibt (-1..1) zurück.
+    """
+    if torch.rand(1).item() < p_zero:
+        return torch.zeros_like(img)  # hartes Texture-Dropout
+
+    # Blur-Stärke wählen (pro Batch ein Wert → effizient & reproduzierbar)
+    if torch.rand(1).item() < p_heavy:
+        downSize = heavy_down
+    else:
+        downSize = int(torch.randint(low=down_min, high=down_max + 1, size=(1,)).item())
+
+    B, C, H, W = img.shape
+    # down/up wie in blur_image, aber mit zufälligem downSize
+    downsampler = transforms.Resize((downSize, downSize))
+    upsampler   = transforms.Resize((min(H, W), min(H, W)))
+    out = upsampler(downsampler(img))
+
+    if noise_std > 0:
+        noise = torch.randn_like(out) * noise_std
+        out = out + noise
+        out = torch.clamp(out, -1.0, 1.0)
+
+    return out
+
+
 
 #def preperations():
 

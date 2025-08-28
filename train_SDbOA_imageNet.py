@@ -150,6 +150,7 @@ if __name__ == "__main__":
 
 
     # === Initialize Trainiingclasses ===
+    timse   = TIMSE(config=config)   # Initialize EMSE class
     emse    = EMSE(config=config)    # Initialize EMSE class
     tsd     = TSD(config=config)     # Initialize TSD class
     tsg     = TSG(config=config)     # Initialize TSG class
@@ -236,10 +237,10 @@ if __name__ == "__main__":
 
 
     # === Initialize optimizers ===
-    optimD_stage1 = optim.Adam(netD.parameters(), lr=config.LR_D_S1, betas=(0.5, 0.999))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimD_stage2 = optim.Adam(netD.parameters(), lr=config.LR_D_S2, betas=(0.5, 0.999))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimG_stage1 = optim.Adam(netG.parameters(), lr=config.LR_G_S1, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
-    optimG_stage2 = optim.Adam(netG.parameters(), lr=config.LR_G_S2, betas=(0.5, 0.999))     # Optimizer for Generator (GAN-typical Betas)
+    optimD_stage1 = optim.Adam(netD.parameters(), lr=config.LR_D_S1, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
+    optimD_stage2 = optim.Adam(netD.parameters(), lr=config.LR_D_S2, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
+    optimG_stage1 = optim.Adam(netG.parameters(), lr=config.LR_G_S1, betas=(0.5, 0.99))     # Optimizer for Generator (GAN-typical Betas)
+    optimG_stage2 = optim.Adam(netG.parameters(), lr=config.LR_G_S2, betas=(0.5, 0.99))     # Optimizer for Generator (GAN-typical Betas)
 
     if os.path.exists(config.PATH_OPTIM_D_S1):
         optimD_stage1.load_state_dict(torch.load(config.PATH_OPTIM_D_S1))
@@ -315,11 +316,12 @@ if __name__ == "__main__":
         IMG = img
 
         # === EMSE >>>
-        EDGE_MAP_TEST = emse.doEMSE(img)
+        EDGE_MAP_TEST_EMSE = emse.doEMSE(img)
+        EDGE_MAP_TEST_TIMSE = timse.diff_edge_map(img)
         # <<< EMSE ===
 
         # === TSD >>>
-        DEFORMED_MAP_TEST = tsd.doTSD(EDGE_MAP_TEST)
+        DEFORMED_MAP_TEST = tsd.doTSD(EDGE_MAP_TEST_TIMSE)
         # <<< TSD ===
 
         # === Show images depending on configuration ===
@@ -327,7 +329,7 @@ if __name__ == "__main__":
             config=config,
             num_epoch=-1,
             img=IMG,
-            edgeMap=EDGE_MAP_TEST,
+            edgeMap=EDGE_MAP_TEST_TIMSE,
             path=path2save_epochImg,
             print_original=True,
             netG=netG,
@@ -395,6 +397,7 @@ if __name__ == "__main__":
         # Initialize time lists
         time_Iteration = []  # Start time for iteration
         time_EMSE = []
+        time_TIMSE = []
         time_TSD = []
         time_TSG = type('TimeTSG', (object,), {})()  # Create a simple object to hold TSG times
         time_TSG.time_trainD = []
@@ -421,6 +424,12 @@ if __name__ == "__main__":
             time_EMSE.append(time.time() - time_startEMSE)
             # <<< EMSE ===
 
+            # === TIMSE >>>
+            time_startTIMSE = time.time()
+            edgeMap = timse.diff_edge_map(img)
+            time_TIMSE.append(time.time() - time_startTIMSE)
+            # <<< TIMSE ===
+
             # === TSD >>>
             time_startTSD = time.time()
             deformedImg = tsd.doTSD(edgeMap)
@@ -441,6 +450,7 @@ if __name__ == "__main__":
                 netD, netG, optimD_stage1, optimG_stage1, loss, time_TSG = tsg.doTSG_stage1_training(
                     iteration=i,
                     config=config,
+                    timse=timse,
                     emse=emse,
                     img=img,
                     label=label,
@@ -458,6 +468,7 @@ if __name__ == "__main__":
                 netD, netG, optimD_stage2, optimG_stage2, loss, time_TSG = tsg.doTSG_stage2_training(
                     iteration=i,
                     config=config,
+                    timse=timse,
                     emse=emse,
                     img=img,
                     label=label,
@@ -526,7 +537,7 @@ if __name__ == "__main__":
                 config=config,
                 num_epoch=epoch,
                 img=IMG,
-                edgeMap=EDGE_MAP_TEST if training_stage==1 else DEFORMED_MAP_TEST,
+                edgeMap=EDGE_MAP_TEST_TIMSE if training_stage==1 else DEFORMED_MAP_TEST,
                 netG=netG,
                 show=False,
                 save=True,
@@ -587,9 +598,16 @@ if __name__ == "__main__":
             time_emse = time.time()-time_startEmse
             # <<< EMSE ===
 
+            # === TIMSE >>>
+            time_startTimse = time.time()
+            edgeMap = timse.diff_edge_map(img)
+            time_timse = time.time() - time_startTimse
+            # <<< TIMSE ===
+
             # === TSD >>>
             time_startTsd = time.time()
-            deformedImg = tsd.doTSD(edgeMap)
+            # deformedImg = tsd.doTSD(edgeMap)
+            # NO TSD IN VALIDATION --> PAPER !
             time_tsd = time.time() - time_startTsd
             # <<< TSD ===
 
@@ -598,6 +616,7 @@ if __name__ == "__main__":
             if training_stage==1:
                 loss = tsg.doTSG_stage1_testing(
                     config=config,
+                    timse=timse,
                     emse=emse,
                     img=img,
                     label=label,
@@ -610,10 +629,11 @@ if __name__ == "__main__":
             else:
                 loss, cls_prediction = tsg.doTSG_stage2_testing(
                     config=config,
+                    timse=timse,
                     emse=emse,
                     img=img,
                     label=label,
-                    e_deformed=deformedImg,
+                    e_extend=edgeMap,
                     netD=netD,
                     netG=netG,
                     cls=cls,
@@ -622,7 +642,8 @@ if __name__ == "__main__":
                     L1_loss=L1_loss
                 )
                 # Count correct predictions and total predictions to calculate accuracy
-                correct += (cls_prediction == label).sum().float()
+                if config.TRAIN_WITH_CLS:
+                    correct += (cls_prediction == label).sum().float()
             time_tsg = time.time() - time_startTsg
             # <<< Generation and Classification ===
 
@@ -647,13 +668,15 @@ if __name__ == "__main__":
             if config.DEBUG_MODE and i >= config.DEBUG_ITERS_START+config.DEBUG_ITERS_AMOUNT:
                 break
 
+        #TODO: call diagnostics.py
+
         # calculate average losses
         total_batches = max(len(val_loader), 1)
         total_items = total_batches*config.BATCH_SIZE
         avg_D_loss = total_D_loss / total_batches
         avg_G_loss = total_G_loss / total_batches
         current_val_loss = avg_G_loss
-        if training_stage==2:
+        if config.TRAIN_WITH_CLS and training_stage==2:
             avg_cls_loss = total_cls_loss / total_batches
             acc = (correct / total_items).cpu().detach().data.numpy()
 
@@ -685,7 +708,7 @@ if __name__ == "__main__":
         epoch_metric = {
             "epoch": epoch + 1,
             "stage": training_stage,
-            "accuracy": float(acc) if training_stage==2 else None,
+            "accuracy": float(acc) if config.TRAIN_WITH_CLS and training_stage==2 else None,
             "discriminator_loss": float(avg_D_loss),
             "generator_loss": float(avg_G_loss),
             "classifier_loss": float(avg_cls_loss) if config.TRAIN_WITH_CLS and training_stage==2 else None,

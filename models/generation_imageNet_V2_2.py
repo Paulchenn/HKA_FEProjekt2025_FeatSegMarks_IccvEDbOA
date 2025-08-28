@@ -31,8 +31,9 @@ def conv_bn_relu(in_ch, out_ch, k=3, s=1, p=1, use_relu=True):
         layers.append(nn.ReLU(inplace=True))
     return nn.Sequential(*layers)
 
-
-def conv_in_relu(in_ch, out_ch, k=3, s=1, p=1, use_relu=True, dropout=0.0):
+#TODO: testing for dropout
+def conv_in_relu(in_ch, out_ch, k=3, s=1, p=1, use_relu=True, dropout=0.0): 
+    
     '''
     Creates a convolutional layer followed by instance normalization and an optional ReLU activation.
     Args:

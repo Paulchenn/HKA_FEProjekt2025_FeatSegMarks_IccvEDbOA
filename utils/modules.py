@@ -21,6 +21,54 @@ from torchvision import transforms
 from torch import amp
 
 
+class TIMSE:
+    """
+    Tim-based shape encoding (TIMSE)
+    """
+
+    def __init__(self, config):
+        self.config = config
+
+    def diff_edge_map(self, img, eps=1e-6):
+        """
+        Differenzierbare Kantenkarte via Sobel.
+        Erwartet img in [-1,1], Shape [B,C,H,W], gibt [B,1,H,W] in [0,1] zurück.
+        """
+        # Grauwert
+        if img.shape[1] == 3:
+            r = img[:, 0:1]
+            g = img[:, 1:2]
+            b = img[:, 2:3]
+            gray = 0.299 * r + 0.587 * g + 0.114 * b
+        else:
+            gray = img
+
+        # Sobel-Filter
+        kx = torch.tensor([[-1, 0, 1],
+                        [-2, 0, 2],
+                        [-1, 0, 1]], dtype=img.dtype, device=img.device).view(1, 1, 3, 3)
+        ky = torch.tensor([[-1, -2, -1],
+                        [ 0,  0,  0],
+                        [ 1,  2,  1]], dtype=img.dtype, device=img.device).view(1, 1, 3, 3)
+
+        gx = F.conv2d(gray, kx, padding=1)
+        gy = F.conv2d(gray, ky, padding=1)
+        mag = torch.sqrt(gx * gx + gy * gy + eps)
+
+        # per-Image normalisieren (numerisch stabil)
+        mag = mag / (mag.amax(dim=(2, 3), keepdim=True) + eps)
+
+        # invertieren: Hintergrund hell (≈1), Kanten dunkler (≈0..grau)
+        inv = 1.0 - mag
+
+        # auf 3 Kanäle bringen (Model erwartet 3ch)
+        edge3 = inv.repeat(1, 3, 1, 1)
+        # edge3 = torch.cat([inv, inv, inv], 1)  # äquivalent
+
+        return edge3
+
+
+
 class EMSE:
     """
     Edge map-based shape encoding (EMSE)
@@ -244,6 +292,7 @@ class TSG:
         self,
         iteration,
         config,
+        timse,
         emse,
         img,
         label,
@@ -269,7 +318,22 @@ class TSG:
 
 
         # === Stage 1: Step 1: Precompute blurred texture map Itxt ===
-        img_blur = blur_image(img, config.DOWN_SIZE)  # corresponds to Itxt in the paper
+        #img_blur = blur_image(img, config.DOWN_SIZE)  # corresponds to Itxt in the paper
+        #replaced with new dynamic blur:
+
+        if getattr(config, "tex_dropout_s1", False):
+            img_blur = blur_image_dynamic(
+                img,
+                down_min=getattr(config, "texD_down_min", 64),
+                down_max=getattr(config, "texD_down_max", 128),
+                p_heavy=getattr(config, "texD_p_heavy", 0.35),
+                heavy_down=getattr(config, "texD_heavy_down", 12),
+                p_zero=getattr(config, "texD_p_zero", 0.15),
+                noise_std=getattr(config, "texD_noise_std", 0.0),
+            )
+        else:
+            img_blur = blur_image(img, config.DOWN_SIZE)
+
 
 
         # === Stage 1: Step 2: Discriminator training with rough image ===
@@ -305,8 +369,12 @@ class TSG:
 
         with autocast_ctx:
             # === Edge preservation loss (Ledge) ===
-            e_extend_G_rough = emse.doEMSE(G_rough.detach())
+            e_extend_G_rough = timse.diff_edge_map(G_rough)                          # [B,1,H,W]
+            # e_extend_G_rough = emse.doEMSE(G_rough.detach())
             edge_loss = L1_loss(e_extend_G_rough, e_extend)
+
+            # e_extend_G_rough = emse.doEMSE(G_rough.detach())
+            # edge_loss = L1_loss(e_extend_G_rough, e_extend)
 
             # call discriminator again due to inplace-error
             D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
@@ -354,6 +422,7 @@ class TSG:
         self,
         iteration,
         config,
+        timse,
         emse,
         img,
         label,
@@ -430,8 +499,12 @@ class TSG:
             time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
 
             # === Edge preservation loss (Ledge) ===
-            e_extend_G_fine = emse.doEMSE(G_fine.detach())
+            e_extend_G_fine = timse.diff_edge_map(G_fine)                          # [B,1,H,W]
+            # e_extend_G_rough = emse.doEMSE(G_rough.detach())
             edge_loss = L1_loss(e_extend_G_fine, e_deformed)
+
+            # e_extend_G_fine = emse.doEMSE(G_fine.detach())
+            # edge_loss = L1_loss(e_extend_G_fine, e_deformed)
 
             # === Generator loss ===
             # call discriminator again due to inplace-error
@@ -482,6 +555,7 @@ class TSG:
     def doTSG_stage1_testing(
         self,
         config,
+        timse,
         emse,
         img,
         label,
@@ -529,8 +603,12 @@ class TSG:
             # === Stage 2: Step 3: Generator validation ===
             with autocast_ctx:
                 # === Edge preservation loss (Ledge) ===
-                e_extend_G_rough = emse.doEMSE(G_rough.detach())
+                e_extend_G_rough = timse.diff_edge_map(G_rough)                          # [B,1,H,W]
+                # e_extend_G_rough = emse.doEMSE(G_rough.detach())
                 edge_loss = L1_loss(e_extend_G_rough, e_extend)
+
+                # e_extend_G_rough = emse.doEMSE(G_rough.detach())
+                # edge_loss = L1_loss(e_extend_G_rough, e_extend)
                 
                 img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
                 G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
@@ -554,10 +632,11 @@ class TSG:
     def doTSG_stage2_testing(
         self,
         config,
+        timse,
         emse,
         img,
         label,
-        e_deformed,
+        e_extend,
         netD,
         netG,
         cls,
@@ -587,7 +666,7 @@ class TSG:
             # === Stage 2: Step 2: Discriminator validation with fine image ===
             with autocast_ctx:
                 # Generate fine image from deformed edge map
-                G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)
+                G_fine = self.generateImg(mn_batch, netG, e_extend, img_blur)
                 G_fine = G_fine.contiguous()
 
                 # Discriminator output on real and fake
@@ -604,17 +683,25 @@ class TSG:
             # === Stage 2: Step 3: Generator validation with fine image ===
             with autocast_ctx:
                 # === Classifier Loss ===
-                G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
-                if G_fine_resized.shape[1] == 1:
-                    G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
-                G_fine_norm = transform_cls(G_fine_resized)
-                cls_output = cls(G_fine_norm)
-                loss.cls_loss = CE_loss(cls_output, label)
-                cls_prediction = torch.argmax(cls_output, dim=1)
+                if config.TRAIN_WITH_CLS:
+                    G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
+                    if G_fine_resized.shape[1] == 1:
+                        G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
+                    G_fine_norm = transform_cls(G_fine_resized)
+                    cls_output = cls(G_fine_norm)
+                    loss.cls_loss = CE_loss(cls_output, label)
+                    cls_prediction = torch.argmax(cls_output, dim=1)
+                else:
+                    loss.cls_loss = torch.tensor(0.0).to(config.DEVICE)
+                    cls_prediction = None
 
                 # === Edge preservation loss (Ledge) ===
-                emse_G_fine = emse.doEMSE(G_fine.detach())
-                edge_loss = L1_loss(emse_G_fine, e_deformed)
+                e_extend_G_fine = timse.diff_edge_map(G_fine)                          # [B,1,H,W]
+                # e_extend_G_rough = emse.doEMSE(G_rough.detach())
+                edge_loss = L1_loss(e_extend_G_fine, e_extend)
+
+                # emse_G_fine = emse.doEMSE(G_fine.detach())
+                # edge_loss = L1_loss(emse_G_fine, e_deformed)
 
                 # === Generator loss ===
                 img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
