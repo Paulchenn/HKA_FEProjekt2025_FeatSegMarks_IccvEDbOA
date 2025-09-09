@@ -5,9 +5,11 @@
 
   "show_imgEmseTsd": false,
   "show_tsg": true,
-  "show_images_interval": 50,
+  "show_images_interval": 100,
 
-  "start_in_stage": 1,
+  "save_all_epochs": false,
+
+  "start_in_stage": 2,
 
   "save_path": "./Result",
 
@@ -16,20 +18,21 @@
   "device": "cuda",
   "batch_size": 16,
   "epochs": 999,
-  "patience_stage1": 30,
-  "patience_stage2": 30,
+  "patience_stage1": 15,
+  "patience_stage2": 20,
 
-  "path_tuned_D": "f./Result/20250825_161117/ImageNet256/best_netD/netD__stage1__Epoch_009.pth",
-  "path_optim_D_stage1": "f./Result/20250825_161117/ImageNet256/best_optimD/optimD__stage1__Epoch_009.pth",
-  "path_optim_D_stage2": "f./Result/20250825_161117/ImageNet256/best_optimD/optimD__stage2__Epoch_009.pth",
+  "path_tuned_D": "./Result/20250905_190135/ImageNet256/best_netD/netD__stage2__Epoch_326.pth",
+  "path_optim_D_stage1": "./Result/20250905_190135/ImageNet256/best_optimD/optimD__stage1__Epoch_169.pth",
+  "path_optim_D_stage2": "./Result/20250905_190135/ImageNet256/best_optimD/optimD__stage2__Epoch_326.pth",
 
-  "path_tuned_G": "f./Result/20250825_161117/ImageNet256/best_netG/netG__stage1__Epoch_009.pth",
-  "path_optim_G_stage1": "f./Result/20250825_161117/ImageNet256/best_optimG/optimG__stage1__Epoch_009.pth",
-  "path_optim_G_stage2": "f./Result/20250825_161117/ImageNet256/best_optimG/optimG__stage2__Epoch_009.pth",
+  "path_tuned_G": "./Result/20250905_190135/ImageNet256/best_netG/netG__stage2__Epoch_326.pth",
+  "path_optim_G_stage1": "./Result/20250905_190135/ImageNet256/best_optimG/optimG__stage1__Epoch_169.pth",
+  "path_optim_G_stage2": "./Result/20250905_190135/ImageNet256/best_optimG/optimG__stage2__Epoch_326.pth",
 
   "train_with_cls": false,
 
-  "downSize": 128,
+  "downSize": 192,
+  "downSize2": 32,
 
   "tex_dropout_s1": true,
   "texD_p_zero": 0.20,
@@ -57,6 +60,18 @@
     "discriminator_stage2": 1e-6,
     "generator_stage2": 5e-5
   },
+
+  "L1_COMPARE_TO_ORIG": true,
+
+  "tsd_lam": 0.035,
+  "tsd_dist": "uniform",
+
+  "DS_PRE_BLUR_K": 3,
+  "DS_PRE_BLUR_SIGMA": 1.0,
+  "DS_OPEN_KS": 0,
+  "DS_TAU": 0.25,
+  "DS_BETA": 17.0,
+  "DS_CLOSE_KS": 0,
 
   "image_size": 256,
   "noise_size": 100,
@@ -144,10 +159,10 @@
       "74": "cello",
       "75": "chain",
       "76": "chain_mail",
-      "77": "chain_saw",
-      "78": "chest"
+      "77": "chain_saw"
     },
     "SELECTED_SYNSETS": {
+      "78": "chest",
       "79": "chiffonier",
       "80": "chime",
       "81": "china_cabinet",
