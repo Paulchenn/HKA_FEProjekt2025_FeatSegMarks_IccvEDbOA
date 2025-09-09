@@ -4,7 +4,6 @@ import pdb
 import sys
 import time
 import torch
-import shutil
 
 import torchvision.models as torch_models
 
@@ -117,20 +116,7 @@ def myInit():
     # create log-directory (if not yet done)
     folder2save_log = os.path.join(config.SAVE_PATH)
     create_saveFolder(folder2save_log)  # Create folder to save log
-
-    # create log-directory (if not yet done)
-    folder2save_log = os.path.join(config.SAVE_PATH)
-    create_saveFolder(folder2save_log)  # Create folder to save log
-
-    # aktuelle (aufgelöste) Laufzeit-Config im Log-Ordner speichern
-    config_snapshot_path = os.path.join(folder2save_log, "config_runtime.json")
-    with open(config_snapshot_path, "w") as f:
-        json.dump(vars(config), f, indent=2, default=str)  # default=str wandelt z.B. torch.device in String
-
-    print(f"[Init] Laufzeit-Config gespeichert: {os.path.abspath(config_snapshot_path)}")
-
-    # Log-Datei im selben Ordner
-    path2save_log = os.path.join(folder2save_log, "log.txt")
+    path2save_log = os.path.join(folder2save_log, f'log.txt')  # Path to save the log
 
     # Log-Datei öffnen und stdout + stderr umlcsv_epochs_output_patheiten
     log_file = open(path2save_log, "w")
@@ -217,7 +203,6 @@ if __name__ == "__main__":
     
 
     # === Load checkpoints
-
     if os.path.exists(config.PATH_TUNED_G):
         checkpoint = torch.load(config.PATH_TUNED_G, map_location=config.DEVICE)
         model_dict = netG.state_dict()
@@ -336,7 +321,7 @@ if __name__ == "__main__":
         # <<< EMSE ===
 
         # === TSD >>>
-        DEFORMED_MAP_TEST, TSD_GRID_TEST = tsd.doTSD(EDGE_MAP_TEST_DS_EMSE, return_grid=True)
+        DEFORMED_MAP_TEST = tsd.doTSD(EDGE_MAP_TEST_DS_EMSE)
         # <<< TSD ===
 
         # === Show images depending on configuration ===
@@ -448,7 +433,7 @@ if __name__ == "__main__":
 
             # === TSD >>>
             time_startTSD = time.time()
-            deformedEdge, tsd_grid = tsd.doTSD(edgeMap, return_grid=True)  # random pro Iteration
+            deformedImg = tsd.doTSD(edgeMap)
             time_TSD.append(time.time() - time_startTSD)
             # <<< TSD ===
 
@@ -456,7 +441,7 @@ if __name__ == "__main__":
             if config.SHOW_IMG_EMSE_TSD and i % config.SHOW_IMAGES_INTERVAL == 0:
                 show_imgEmseTsd(
                     img,
-                    deformedEdge,
+                    deformedImg,
                     edgeMap
                 )
 
@@ -486,11 +471,9 @@ if __name__ == "__main__":
                     config=config,
                     ds_emse=ds_emse,
                     emse=emse,
-                    tsd=tsd,
                     img=img,
                     label=label,
-                    e_deformed=deformedEdge,
-                    tsd_grid=tsd_grid,         # <— NEU: das zugehörige Grid
+                    e_deformed=deformedImg,
                     netD=netD,
                     netG=netG,
                     cls=cls,
@@ -559,25 +542,24 @@ if __name__ == "__main__":
                 netG=netG,
                 show=False,
                 save=True,
-                path=path2save_epochImg,
-                training_stage=training_stage
+                path=path2save_epochImg
             )
         except IndexError as e:
             print(f"IndexError: {e}")
 
-        if getattr(config, "save_all_epochs", False):
-            export_weights(
-                config=config,
-                training_stage=training_stage,
-                state='tuned',
-                epoch=epoch,
-                netD=netD,
-                optimD_s1=optimD_stage1,
-                optimD_s2=optimD_stage2,
-                netG=netG,
-                optimG_s1=optimG_stage1,
-                optimG_s2=optimG_stage2
-            )
+
+        export_weights(
+            config=config,
+            training_stage=training_stage,
+            state='tuned',
+            epoch=epoch,
+            netD=netD,
+            optimD_s1=optimD_stage1,
+            optimD_s2=optimD_stage2,
+            netG=netG,
+            optimG_s1=optimG_stage1,
+            optimG_s2=optimG_stage2
+        )
 
 
         # === VALIDATION ===
@@ -625,8 +607,8 @@ if __name__ == "__main__":
 
             # === TSD >>>
             time_startTsd = time.time()
-            deformedEdge, tsd_grid = tsd.doTSD(edgeMap, return_grid=True)  # random pro Iteration
-            # NO TSD IN VALIDATION --> PAPER (testing with and without, currently with deform)
+            # deformedImg = tsd.doTSD(edgeMap)
+            # NO TSD IN VALIDATION --> PAPER !
             time_tsd = time.time() - time_startTsd
             # <<< TSD ===
 
@@ -650,11 +632,9 @@ if __name__ == "__main__":
                     config=config,
                     ds_emse=ds_emse,
                     emse=emse,
-                    tsd=tsd,
                     img=img,
                     label=label,
-                    e_extend=deformedEdge,
-                    tsd_grid=tsd_grid,         # <— NEU: das zugehörige Grid
+                    e_extend=edgeMap,
                     netD=netD,
                     netG=netG,
                     cls=cls,
