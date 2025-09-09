@@ -136,6 +136,7 @@ def get_config(file_path):
     config["TRAIN_WITH_CLS"] = config["train_with_cls"]
 
     config["DOWN_SIZE"] = config["downSize"]
+    config["DOWN_SIZE2"] = config["downSize2"]
 
     config["DEBUG_MODE"] = config["debug_mode"]
     config["DEBUG_ITERS_START"] = config["debugIterations_strt"]
@@ -531,6 +532,7 @@ def show_result(
         print_original=False,
         show=False,
         save=False,
+        training_stage=1,
         *,
         netG
 ):
@@ -538,7 +540,10 @@ def show_result(
 
     if not print_original:
         z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(config.DEVICE))
-        img_blur = blur_image(img, config.DOWN_SIZE)
+        if training_stage == 1:
+            img_blur = blur_image(img, config.DOWN_SIZE)
+        else:
+            img_blur = blur_image(img, config.DOWN_SIZE2)
         netG.eval()
         test_images = netG(z_, edgeMap, img_blur)
         netG.train()
