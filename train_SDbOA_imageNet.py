@@ -43,7 +43,7 @@ def create_saveFolder(save_path):
     """
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-
+        
 
 def export_weights(
         config,
@@ -57,43 +57,94 @@ def export_weights(
         optimG_s1,
         optimG_s2
 ):
-    num_digits = len(str(config.EPOCHS))
+    """
+    Speichert Netze & Optimizer. Wenn state == 'temp':
+      - in jedem Zielordner erst alte Dateien aufräumen (nur die letzten 4 behalten),
+      - anschließend den neuen Checkpoint hinzufügen.
+    Ergebnis: max. 5 Dateien pro Ordner (4 alte + der neue).
+    """
+    num_digits = len(str(getattr(config, "epochs", 3)))
 
-    # choose correct optimizer depending on training stage
-    if training_stage==1:
-        optimD=optimD_s1
-        optimG=optimG_s1
+    # --- Helper: Ordner anlegen
+    def create_saveFolder(folder):
+        os.makedirs(folder, exist_ok=True)
+
+    # --- Helper: Alte Dateien aufräumen (nach mtime sortiert)
+    def _cleanup_keep_last_k(folder, keep=4, suffix=".pth"):
+        try:
+            files = [
+                os.path.join(folder, f)
+                for f in os.listdir(folder)
+                if f.endswith(suffix)
+            ]
+        except FileNotFoundError:
+            return
+        if len(files) <= keep:
+            return
+        files.sort(key=lambda p: os.path.getmtime(p), reverse=True)  # neueste zuerst
+        for f in files[keep:]:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+
+    # richtigen Optimizer je Stage
+    if training_stage == 1:
+        optimD = optimD_s1
+        optimG = optimG_s1
+        patience = getattr(config, "patience_stage1", 3)
     else:
-        optimD=optimD_s2
-        optimG=optimG_s2
+        optimD = optimD_s2
+        optimG = optimG_s2
+        patience = getattr(config, "patience_stage2", 3)
 
-    # === Save Discriminator and its Optimizer >>>
-    # Save the Discriminator models
-    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_netD')
-    create_saveFolder(folder2save)  # Create folder to save tuned Discriminator
-    path2save = os.path.join(folder2save, f'netD__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-    torch.save(netD.state_dict(), path2save)  # Saves Diskriminator
+    base_dir = os.path.join(config.SAVE_PATH, config.DATASET_NAME)
 
-    # Save the Discriminator optimizer
-    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_optimD')
-    create_saveFolder(folder2save)  # Create folder to save tuned Generator
-    path2save = os.path.join(folder2save, f'optimD__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+    # Wenn 'temp': vor dem Speichern entrümpeln (4 alte behalten, neuer kommt gleich dazu)
+    if state == "temp":
+        for sub in (f"{state}_netD", f"{state}_optimD", f"{state}_netG", f"{state}_optimG"):
+            folder = os.path.join(base_dir, sub)
+            create_saveFolder(folder)
+            _cleanup_keep_last_k(folder, keep=patience, suffix=".pth")
+
+    # === Discriminator + Optimizer speichern ===
+    # Discriminator
+    folder2save = os.path.join(base_dir, f"{state}_netD")
+    create_saveFolder(folder2save)
+    path2save = os.path.join(
+        folder2save,
+        f"netD__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth"
+    )
+    torch.save(netD.state_dict(), path2save)
+
+    # Discriminator-Optimizer
+    folder2save = os.path.join(base_dir, f"{state}_optimD")
+    create_saveFolder(folder2save)
+    path2save = os.path.join(
+        folder2save,
+        f"optimD__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth"
+    )
     torch.save(optimD.state_dict(), path2save)
-    # <<< Save Discriminator and its Optimizer ===
-    
 
-    # === Save Generator and its Optimizer >>>
-    # Save the Generator models
-    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_netG')
-    create_saveFolder(folder2save)  # Create folder to save tuned Generator
-    path2save = os.path.join(folder2save, f'netG__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
-    torch.save(netG.state_dict(), path2save)  # Saves Generator
-    # Save the Generator optimizer
-    folder2save = os.path.join(config.SAVE_PATH, config.DATASET_NAME, f'{state}_optimG')
-    create_saveFolder(folder2save)  # Create folder to save tuned Generator
-    path2save = os.path.join(folder2save, f'optimG__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth')  # Path to save the results
+    # === Generator + Optimizer speichern ===
+    # Generator
+    folder2save = os.path.join(base_dir, f"{state}_netG")
+    create_saveFolder(folder2save)
+    path2save = os.path.join(
+        folder2save,
+        f"netG__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth"
+    )
+    torch.save(netG.state_dict(), path2save)
+
+    # Generator-Optimizer
+    folder2save = os.path.join(base_dir, f"{state}_optimG")
+    create_saveFolder(folder2save)
+    path2save = os.path.join(
+        folder2save,
+        f"optimG__stage{training_stage}__Epoch_{epoch+1:0{num_digits}d}.pth"
+    )
     torch.save(optimG.state_dict(), path2save)
-    # <<< Save Generator and its Optimizer ===
+
 
 
 def seconds_to_hhmmss(seconds):
@@ -570,6 +621,19 @@ if __name__ == "__main__":
                 config=config,
                 training_stage=training_stage,
                 state='tuned',
+                epoch=epoch,
+                netD=netD,
+                optimD_s1=optimD_stage1,
+                optimD_s2=optimD_stage2,
+                netG=netG,
+                optimG_s1=optimG_stage1,
+                optimG_s2=optimG_stage2
+            )
+        else:
+            export_weights(
+                config=config,
+                training_stage=training_stage,
+                state='temp',
                 epoch=epoch,
                 netD=netD,
                 optimD_s1=optimD_stage1,
