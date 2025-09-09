@@ -89,7 +89,7 @@ def plot_gan_logs(axs, result_dir):
         g_loss_val = parse_float_list(val_data, 'generator_loss')
 
         axs[1, 0].clear()
-        axs[1, 0].plot(epoch_val, d_loss_val, color='green', label='Disc Loss (Val)')
+        axs[1, 0].plot(epoch_val, d_loss_val, color='green', label='Disc Loss (Val)', marker = 'o')
         axs[1, 0].set_title("Validation: Discriminator Loss")
         axs[1, 0].set_xlabel("Epoch")
         axs[1, 0].set_ylabel("Loss")
@@ -97,7 +97,7 @@ def plot_gan_logs(axs, result_dir):
         axs[1, 0].grid(True)
 
         axs[1, 1].clear()
-        axs[1, 1].plot(epoch_val, g_loss_val, color='red', label='Gen Loss (Val)')
+        axs[1, 1].plot(epoch_val, g_loss_val, color='red', label='Gen Loss (Val)', marker = 'o')
         axs[1, 1].set_title("Validation: Generator Loss")
         axs[1, 1].set_xlabel("Epoch")
         axs[1, 1].set_ylabel("Loss")

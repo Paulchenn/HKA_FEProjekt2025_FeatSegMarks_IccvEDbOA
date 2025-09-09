@@ -174,20 +174,26 @@ def ablation_tests(netG, z, E, I_txt, loss_fn: EdgeTextureDiagLoss):
 # -----------------------------------------
 # Build E (Edge) und I_txt (blur) pro Batch
 # -----------------------------------------
-def build_E_and_I(config, img, tds_emse_obj: Optional[Any]):
+def build_E_and_I(config, img, ds_emse_obj: Optional[Any]):
     # E: bevorzugt DS_EMSE; Fallback Sobel
     if ds_emse_obj is not None:
-        E = ds_emse_obj.diff_edge_map(img)
+        E = ds_emse_obj.diff_edge_map(img)   # kann [B,1,H,W] ODER [B,3,H,W] liefern, Range oft [0,1]
     else:
-        # Sobel auf img (als Pseudo-Edge)
         sob = SobelEdges().to(img.device)
-        E = sob(img)            # (B,1,H,W)
-        E = E.repeat(1, img.shape[1], 1, 1)  # auf 3 Kanäle broadcasten
-        # Skaliere in (-1..1), um das typische Projekt-Range beizubehalten
+        E = sob(img)                         # [B,1,H,W], [0,1]
+
+    # Auf 3 Kanäle bringen, falls nötig (netG erwartet 3 Kanäle am Edge-Encoder)
+    if E.shape[1] == 1:
+        E = E.repeat(1, img.shape[1], 1, 1)  # -> [B,3,H,W]
+
+    # Auf (-1..1) skalieren, wenn aktuell [0,1]
+    if E.min() >= 0:
         E = E * 2.0 - 1.0
-    # I_txt: GPU-kompatibles Down/Up
+
+    # I_txt: GPU-kompatibles Down/Up (bleibt im selben Range wie img, also (-1..1))
     I_txt = blur_by_down_up(img, config.DOWN_SIZE)
     return E, I_txt
+
 
 
 # -----------------------------------------
