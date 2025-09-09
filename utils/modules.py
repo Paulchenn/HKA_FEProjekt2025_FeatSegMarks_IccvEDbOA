@@ -22,50 +22,110 @@ from torch import amp
 
 
 class DS_EMSE:
-    """
-    Tim-based shape encoding (DS_EMSE)
-    """
-
     def __init__(self, config):
         self.config = config
+
+    @staticmethod
+    def _gauss_kernel(k=5, sigma=1.0, device="cpu", dtype=torch.float32):
+        # separabler 1D-Kern, daraus 2D
+        x = torch.arange(k, device=device, dtype=dtype) - (k - 1) / 2
+        g1 = torch.exp(-0.5 * (x / sigma) ** 2)
+        g1 = g1 / g1.sum()
+        g2 = g1[:, None] @ g1[None, :]
+        return g2
+
+    @staticmethod
+    def _morph_open(x, ks):
+        # Opening auf "hellen" Strukturen: Erosion (min) -> Dilation (max)
+        pad = ks // 2
+        # Erosion ~ minpool = -maxpool(-x)
+        eroded = -F.max_pool2d(-x, kernel_size=ks, stride=1, padding=pad)
+        opened = F.max_pool2d(eroded, kernel_size=ks, stride=1, padding=pad)
+        return opened
+
+    @staticmethod
+    def _morph_close(x, ks):
+        # optional: Closing, falls du Lücken füllen willst (dicke Kanten verbinden)
+        pad = ks // 2
+        dilated = F.max_pool2d(x, kernel_size=ks, stride=1, padding=pad)
+        closed = -F.max_pool2d(-dilated, kernel_size=ks, stride=1, padding=pad)
+        return closed
+    
+    @staticmethod
+    def _odd_or_zero(k: int) -> int:
+        """0 bleibt 0 (deaktiviert). k>=1 wird auf ungerade korrigiert."""
+        k = int(max(0, k))
+        if k == 0:
+            return 0
+        return k if (k % 2 == 1) else (k + 1)
+
+    @staticmethod
+    def _box_blur(gray: torch.Tensor, k: int) -> torch.Tensor:
+        """Einfacher Box-Blur auf [B,1,H,W]; k=0/1 → passthrough."""
+        k = DS_EMSE._odd_or_zero(k)
+        if k <= 1:
+            return gray
+        w = torch.ones((1, 1, k, k), dtype=gray.dtype, device=gray.device) / float(k * k)
+        return F.conv2d(gray, w, padding=k // 2)
 
     def diff_edge_map(self, img, eps=1e-6):
         """
         Differenzierbare Kantenkarte via Sobel.
-        Erwartet img in [-1,1], Shape [B,C,H,W], gibt [B,1,H,W] in [0,1] zurück.
+        Erwartet img in [-1,1], Shape [B,C,H,W], gibt [B,3,H,W] in [0,1] zurück (weiß=Hintergrund).
         """
+        B, C, H, W = img.shape
+
         # Grauwert
-        if img.shape[1] == 3:
-            r = img[:, 0:1]
-            g = img[:, 1:2]
-            b = img[:, 2:3]
+        if C == 3:
+            r = img[:, 0:1]; g = img[:, 1:2]; b = img[:, 2:3]
             gray = 0.299 * r + 0.587 * g + 0.114 * b
         else:
             gray = img
 
-        # Sobel-Filter
-        kx = torch.tensor([[-1, 0, 1],
-                        [-2, 0, 2],
-                        [-1, 0, 1]], dtype=img.dtype, device=img.device).view(1, 1, 3, 3)
-        ky = torch.tensor([[-1, -2, -1],
-                        [ 0,  0,  0],
-                        [ 1,  2,  1]], dtype=img.dtype, device=img.device).view(1, 1, 3, 3)
+        # (Optional) Vorglätten vor Sobel — identisch zum Edge-Tuner (Box-Blur)
+        pre_blur_k = int(getattr(self.config, "DS_PRE_BLUR_K", 0))  # 0=aus, sonst beliebig
+        pre_blur_k = self._odd_or_zero(pre_blur_k)                  # gerade → ungerade +1
+        if pre_blur_k > 1:
+            gray = self._box_blur(gray, pre_blur_k)
 
+        # Sobel
+        kx = torch.tensor([[-1, 0, 1],
+                           [-2, 0, 2],
+                           [-1, 0, 1]], dtype=img.dtype, device=img.device).view(1, 1, 3, 3)
+        ky = torch.tensor([[-1, -2, -1],
+                           [ 0,  0,  0],
+                           [ 1,  2,  1]], dtype=img.dtype, device=img.device).view(1, 1, 3, 3)
         gx = F.conv2d(gray, kx, padding=1)
         gy = F.conv2d(gray, ky, padding=1)
         mag = torch.sqrt(gx * gx + gy * gy + eps)
 
-        # per-Image normalisieren (numerisch stabil)
+        # Normalisieren
         mag = mag / (mag.amax(dim=(2, 3), keepdim=True) + eps)
 
-        # invertieren: Hintergrund hell (≈1), Kanten dunkler (≈0..grau)
+        # (Optional) Morphologisches Opening auf der HELLEN Magnitude, um feine Kanten zu killen
+        open_ks = int(getattr(self.config, "DS_OPEN_KS", 0))  # 0=aus, sonst 3/5/7...
+        if open_ks and open_ks >= 3 and open_ks % 2 == 1:
+            mag = self._morph_open(mag, open_ks)
+
+        # (Optional) Soft-Threshold (Sigmoid-Gating) für „nur starke“ Kanten
+        # tau ~ Schwellwert in [0..1], beta ~ Steilheit (10..30 ist oft gut)
+        tau = getattr(self.config, "DS_TAU", None)   # z.B. 0.3
+        beta = float(getattr(self.config, "DS_BETA", 20.0))
+        if tau is not None:
+            mag = torch.sigmoid((mag - float(tau)) * beta)
+
+        # (Optional) Closing, falls du nach dem Opening Lücken schließen willst
+        close_ks = int(getattr(self.config, "DS_CLOSE_KS", 0))
+        if close_ks and close_ks >= 3 and close_ks % 2 == 1:
+            mag = self._morph_close(mag, close_ks)
+
+        # invertieren: weißer Hintergrund (1), Kanten dunkel
         inv = 1.0 - mag
 
-        # auf 3 Kanäle bringen (Model erwartet 3ch)
+        # auf 3 Kanäle bringen
         edge3 = inv.repeat(1, 3, 1, 1)
-        # edge3 = torch.cat([inv, inv, inv], 1)  # äquivalent
-
         return edge3
+
 
 
 
@@ -192,61 +252,77 @@ class TSD:
     def __init__(self, config):
         self.config = config
 
+        # Ziel-Gitter (fix, normalisierte Koords [-1,1])
         x = torch.linspace(-1.0, 1.0, steps=5)
         y = torch.linspace(-1.0, 1.0, steps=5)
-        self.target_control_points = torch.tensor(list(itertools.product(x, y)), device=self.config.DEVICE)
+        self.target_control_points = torch.tensor(
+            list(itertools.product(x, y)),
+            device=self.config.DEVICE
+        )
 
-        # We need height and width later — we initialize tps at the first doTSD call or specify height/width during construction with
-        self.tps = None
+        # Stärke & Verteilung aus der Config
+        self.lam = getattr(config, "TSD_LAM", getattr(config, "tsd_lam", 0.1))
+        self.dist = getattr(config, "TSD_DIST", getattr(config, "tsd_dist", "uniform"))
 
-    def grid_sample(
-        self,
-        input,
-        grid,
-        canvas=None
-    ):
-        output = F.grid_sample(input, grid, align_corners=True).to(self.config.DEVICE)
-        if canvas is None:
-            return output
+        self.tps = None  # lazily init mit erstem Call
+
+    def _sample_noise(self):
+        """Rauschen für die Kontrollpunkte gemäß lam & dist."""
+        if self.dist.lower() == "normal":
+            return torch.randn_like(self.target_control_points) * self.lam
         else:
-            input_mask = Variable(input.data.new(input.size()).fill_(1).to(self.config.DEVICE))
-            output_mask = F.grid_sample(input_mask, grid, align_corners=True)
-            padded_output = output * output_mask + canvas * (1 - output_mask)
-            return padded_output
+            # default: gleichverteilt
+            return torch.empty_like(self.target_control_points).uniform_(-self.lam, self.lam)
 
-    def TPS_Batch(
-        self,
-        imgs
-    ):
-        height, width = imgs.shape[2], imgs.shape[3]
-
-        # Create TPSGridGen only once
+    def _ensure_tps(self, height, width):
         if self.tps is None:
             self.tps = TPSGridGen(self.config, height, width, self.target_control_points)
 
-        tps_img = []
-        for i in range(imgs.shape[0]):
-            img = imgs[i, :, :, :].unsqueeze(0)
-            
-            source_control_points = self.target_control_points + torch.Tensor(self.target_control_points.size()).uniform_(-0.1, 0.1).to(self.config.DEVICE)
+    def _build_grid(self, batch_size, height, width):
+        self._ensure_tps(height, width)
+        grids = []
+        for _ in range(batch_size):
+            src_cps = self.target_control_points + self._sample_noise()
+            src_coord = self.tps(src_cps.unsqueeze(0))          # aktuell: [1, H*W, 2]
+            src_coord = src_coord.view(1, height, width, 2)     # FIX: [1, H, W, 2]
+            grids.append(src_coord)
+        return torch.cat(grids, dim=0)                          # [B, H, W, 2]
 
-            source_coordinate = self.tps(torch.unsqueeze(source_control_points, 0))
+    def apply_grid(self, imgs, grid, canvas_val=1.0):
+        """Wendet ein gegebenes Grid auf imgs an (gleiche H/W)."""
+        B, C, H, W = imgs.shape
+        assert grid.shape == (B, H, W, 2), "Grid shape must match batch and spatial size"
+        out = F.grid_sample(imgs, grid, align_corners=True)
+        # optionales Padding (wie vorher), falls Samples rausfallen
+        inp_mask = imgs.new_ones(imgs.size())
+        out_mask = F.grid_sample(inp_mask, grid, align_corners=True)
+        canvas = imgs.new_full(imgs.size(), fill_value=canvas_val)
+        return out * out_mask + canvas * (1 - out_mask)
 
-            grid = source_coordinate.view(1, height, width, 2)
-            canvas = Variable(torch.Tensor(1, 3, height, width).fill_(1.0)).to(self.config.DEVICE)
-            target_image = self.grid_sample(img, grid, canvas)
-            tps_img.append(target_image)
+    def doTSD(self, img, grid=None, return_grid=False, lam=None):
+        """
+        Verformt img.
+        - Wenn grid=None: zieht ein neues Random-Grid (mit lam falls angegeben).
+        - Wenn grid!=None: verwendet exakt dieses Grid (Identische Deformation).
+        - return_grid=True: gibt (verformtes_img, grid) zurück.
+        """
+        B, C, H, W = img.shape
 
-        tps_img = torch.cat(tps_img, dim=0)
-        return tps_img
-    
-    def doTSD(
-        self,
-        img
-    ):
-        # get the TPS-based shape deformation
-        tpsImg = self.TPS_Batch(img)
-        return tpsImg
+        # ggf. lam temporär überschreiben
+        if lam is not None:
+            old_lam = self.lam
+            self.lam = lam
+        else:
+            old_lam = None
+
+        if grid is None:
+            grid = self._build_grid(B, H, W)
+        out = self.apply_grid(img, grid)
+
+        if old_lam is not None:
+            self.lam = old_lam
+
+        return (out, grid) if return_grid else out
     
 
 class TSG:
@@ -424,6 +500,7 @@ class TSG:
         config,
         ds_emse,
         emse,
+        tsd,
         img,
         label,
         e_deformed,
@@ -436,7 +513,8 @@ class TSG:
         CE_loss,
         L1_loss,
         time_TSG,
-        scaler
+        scaler,
+        tsd_grid=None         # <— NEU
     ):
         '''
         Function for stage 2 training of GAN with fine image (extented and deformed edge map and blured image).
@@ -450,7 +528,7 @@ class TSG:
 
 
         # === Stage 2: Step 1: Precompute blurred texture map Itxt ===
-        img_blur = blur_image(img, config.DOWN_SIZE)  # corresponds to Itxt in the paper
+        img_blur = blur_image(img, config.DOWN_SIZE2)  # corresponds to Itxt in the paper
 
 
         # === Stage 2: Step 2: Discriminator training with fine image ===
@@ -511,6 +589,13 @@ class TSG:
             D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
             D_result_fineImg = D_result_fineImg.mean()
             img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+            # NEU: nur deformieren, wenn wir gegen das deformierte GT vergleichen wollen
+            if not getattr(config, "L1_COMPARE_TO_ORIG", False):
+                if tsd_grid is not None:
+                    img_for_loss = tsd.apply_grid(img_for_loss, tsd_grid)
+                else:
+                    img_for_loss = tsd.doTSD(img_for_loss)
+
             G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
             G_celoss_fine = CE_loss(aux_output_fineImg, label).sum()
 
@@ -634,6 +719,7 @@ class TSG:
         config,
         ds_emse,
         emse,
+        tsd,
         img,
         label,
         e_extend,
@@ -642,7 +728,8 @@ class TSG:
         cls,
         transform_cls,
         CE_loss,
-        L1_loss
+        L1_loss,
+        tsd_grid=None         # <— NEU
     ):
         '''
         Function for stage 2 validation of GAN with fine image (extented and deformed edge map and blured image).
@@ -660,7 +747,7 @@ class TSG:
 
 
             # === Stage 2: Step 1: Precompute blurred texture map Itxt ===
-            img_blur = blur_image(img, config.DOWN_SIZE)  # corresponds to Itxt in the paper
+            img_blur = blur_image(img, config.DOWN_SIZE2)  # corresponds to Itxt in the paper
 
 
             # === Stage 2: Step 2: Discriminator validation with fine image ===
@@ -705,6 +792,13 @@ class TSG:
 
                 # === Generator loss ===
                 img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
+                # *** WICHTIG: dieselbe Deformation wie für e_deformed ***
+                if not getattr(config, "L1_COMPARE_TO_ORIG", False):
+                    if tsd_grid is not None:
+                        img_for_loss = tsd.apply_grid(img_for_loss, tsd_grid)
+                    else:
+                        img_for_loss = tsd.doTSD(img_for_loss)
+
                 G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
                 G_celoss_fine = CE_loss(aux_output_fineImg, label).sum()
 
