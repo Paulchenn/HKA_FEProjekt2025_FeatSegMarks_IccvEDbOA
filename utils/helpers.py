@@ -1,22 +1,25 @@
-import json
-import os
-import torch
-import time
-import itertools
-import pdb
-import pytz
+import json, os, time, pdb, pytz, itertools, glob, os, random
 
-import numpy as np
+from collections import deque
+
+from contextlib import nullcontext
+
+from datetime import datetime
+
 import matplotlib
 import matplotlib.pyplot as plt
 
-from collections import deque
-from types import SimpleNamespace
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, random_split, Subset
-from torch.autograd import Variable
-from datetime import datetime
+import numpy as np
+
 from PIL import Image
+
+import torch
+from torch import amp
+from torchvision import datasets, transforms
+from torch.utils.data import Dataset, DataLoader, random_split, Subset
+from torch.autograd import Variable
+
+from types import SimpleNamespace
 
 
 #def preperations():
@@ -26,31 +29,17 @@ def blur_image(
     img,
     downSize=12
 ):
-    # blur image by downsampling and interpolation / upsampling
+    # img: [B,C,H,W] in [-1,1]
+    B, C, H, W = img.shape
 
-    # original image height and width
-    height, width = img.shape[2], img.shape[3]
-    if height < width:
-        print("Denoising: Input Height smaler than input width!")
-        print("Denoising: Taking smaler input height.")
-        upSize = height
-    elif width < height:
-        print("Denoising: Input Height bigger than input width!")
-        print("Denoising: Taking smaler input width.")
-        upSize = width
-    else:
-        upSize = height
-
-
-    # downsampling
+    # downsample auf Quadrat (downSize, downSize) ist ok...
     downsampler = transforms.Resize((downSize, downSize))
     downsampled = downsampler(img)
 
-    # upsampling
-    upsampler   = transforms.Resize((upSize, upSize))
-    upsampled   = upsampler(downsampled)
+    # ...aber UPSAMPLE MUSS auf Original-HW gehen:
+    upsampler = transforms.Resize((H, W))
 
-    return upsampled
+    return upsampler(downsampled)
 
 def blur_image_dynamic(
     img,
@@ -61,34 +50,18 @@ def blur_image_dynamic(
     p_zero=0.15,
     noise_std=0.0,
 ):
-    """
-    Dynamisches Blur für I_txt:
-      - mit p_heavy sehr starkes Blur (heavy_down),
-      - sonst zufälliges Blur in [down_min, down_max],
-      - mit p_zero komplettes Blackout (I_txt = 0),
-      - optional leichtes Gauss-Rauschen nach dem Blur.
-    Erwartet Batch-Tensor im Range (-1..1), gibt (-1..1) zurück.
-    """
     if torch.rand(1).item() < p_zero:
-        return torch.zeros_like(img)  # hartes Texture-Dropout
-
-    # Blur-Stärke wählen (pro Batch ein Wert → effizient & reproduzierbar)
+        return torch.zeros_like(img)
     if torch.rand(1).item() < p_heavy:
         downSize = heavy_down
     else:
         downSize = int(torch.randint(low=down_min, high=down_max + 1, size=(1,)).item())
 
     B, C, H, W = img.shape
-    # down/up wie in blur_image, aber mit zufälligem downSize
-    downsampler = transforms.Resize((downSize, downSize))
-    upsampler   = transforms.Resize((min(H, W), min(H, W)))
-    out = upsampler(downsampler(img))
-
+    out = transforms.Resize((H, W))(transforms.Resize((downSize, downSize))(img))
     if noise_std > 0:
         noise = torch.randn_like(out) * noise_std
-        out = out + noise
-        out = torch.clamp(out, -1.0, 1.0)
-
+        out = torch.clamp(out + noise, -1.0, 1.0)
     return out
 
 
@@ -121,7 +94,6 @@ def get_config(file_path):
     config["PATH_OPTIM_G_S1"] = config["path_optim_G_stage1"]
     config["PATH_OPTIM_G_S2"] = config["path_optim_G_stage2"]
 
-    config["IMG_SIZE"] = config["image_size"]
     config["NOISE_SIZE"] = config["noise_size"]
 
     config["PATIENCE_S1"] = config["patience_stage1"]
@@ -158,11 +130,20 @@ def get_config(file_path):
     config["LAMBDA_S2_CLS"]     = config["loss_weights"]["lambda_stage2_cls"]
     config["LAMBDA_S2_EDGE"]    = config["loss_weights"]["lambda_stage2_edge"]
 
-    config["DATASET_NAME"] = config["dataset"]["name"]
-    config["DATASET_PATH"] = config["dataset"]["path"]
-    config["CLASS_NAMES"] = list(config["dataset"]["SELECTED_SYNSETS"].values())
-    config["SELECTED_SYNSETS"] = config["dataset"]["SELECTED_SYNSETS"]
-    config["NUM_CLASSES"] = len(config["CLASS_NAMES"])
+    # Dataset (robust for MegaDepth)
+    ds = config.get("dataset", {})
+    config["DATASET_NAME"] = ds.get("name", "image_only")
+    config["DATASET_PATH"] = ds.get("path", "")
+    # ImageNet-spezifisch nur, wenn vorhanden:
+    if "SELECTED_SYNSETS" in ds:
+        config["SELECTED_SYNSETS"] = ds["SELECTED_SYNSETS"]
+        config["CLASS_NAMES"] = list(ds["SELECTED_SYNSETS"].values())
+        config["NUM_CLASSES"] = len(config["CLASS_NAMES"])
+    else:
+        config["CLASS_NAMES"] = []
+        # Wenn du ohne Klassifikation trainierst, nimm 1 als Dummy:
+        config["NUM_CLASSES"] = int(config.get("num_classes", 1))
+        config["TRAIN_WITH_CLS"] = bool(config.get("train_with_cls", False))
 
     # Set timezone (z. B. Europe/Berlin)
     tz = pytz.timezone('Europe/Berlin')
@@ -300,6 +281,97 @@ def get_train_val_loaders(
     return train_loader, val_loader
 
 
+IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp")
+
+class ImageOnlyDataset(Dataset):
+    def __init__(self, root):
+        self.paths = []
+        for ext in IMG_EXTS:
+            self.paths.extend(glob.glob(os.path.join(root, f"**/*{ext}"), recursive=True))
+        self.paths.sort()
+        if len(self.paths) == 0:
+            raise FileNotFoundError(f"No images found under {root}")
+
+    def __len__(self): return len(self.paths)
+
+    def get_path(self, idx):  # schlanker Zugriff für Views
+        return self.paths[idx]
+
+class ImageView(Dataset):
+    """Ein View auf ImageOnlyDataset mit eigener Transform und eigenen Indices."""
+    def __init__(self, base_ds: ImageOnlyDataset, indices, transform=None):
+        self.base = base_ds
+        self.indices = list(indices)
+        self.transform = transform
+
+    def __len__(self): return len(self.indices)
+
+    def __getitem__(self, i):
+        p = self.base.get_path(self.indices[i])
+        img = Image.open(p).convert("RGB")
+        if self.transform: img = self.transform(img)
+        return img, 0  # Dummy-Label
+
+def build_image_only_loaders(config, transform_train, transform_val, pin_memory=True):
+    debug_prints = False
+
+    # Pfad (dict oder Namespace – beide Varianten unterstützen)
+    dataset_path = config.dataset["path"] if isinstance(config.dataset, dict) else config.dataset.path
+    base = ImageOnlyDataset(dataset_path)
+
+    use_ratio = getattr(config, "use_ratio", 0.01)
+    val_ratio = getattr(config, "val_ratio", 0.2)
+
+    n_total = len(base)
+    n_use   = max(1, int(round(n_total * use_ratio)))
+    n_val   = max(1, int(round(n_use * val_ratio)))
+    n_train = max(1, n_use - n_val)
+
+    # Reproduzierbare, zufällige Auswahl von n_use Indices
+    g = torch.Generator().manual_seed(42)
+    all_idx = torch.randperm(n_total, generator=g).tolist()
+    use_idx = all_idx[:n_use]
+
+    # Splitten in Train/Val
+    train_idx = use_idx[:n_train]
+    val_idx   = use_idx[n_train:n_train + n_val]
+    if len(val_idx) == 0:  # Sicherheitsnetz
+        val_idx = use_idx[-1:]
+        train_idx = use_idx[:-1]
+
+    # Eigene Views mit EIGENER Transform
+    train_ds = ImageView(base, train_idx, transform=transform_train)
+    val_ds   = ImageView(base, val_idx,   transform=transform_val)
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=getattr(config, "BATCH_SIZE", 16),
+        shuffle=True,
+        num_workers=getattr(config, "NUM_WORKERS", 8),
+        pin_memory=pin_memory,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=getattr(config, "BATCH_SIZE", 16),
+        shuffle=False,
+        num_workers=getattr(config, "NUM_WORKERS", 8),
+        pin_memory=pin_memory,
+        drop_last=False,
+    )
+
+    if debug_prints:
+        print(f"[LOADER(img-only)] Dataset path: {dataset_path}")
+        print(f"[LOADER(img-only)] n_total: {n_total}")
+        print(f"[LOADER(img-only)] n_use:   {n_use}  (ratio={use_ratio})")
+        print(f"[LOADER(img-only)] n_train: {len(train_ds)}")
+        print(f"[LOADER(img-only)] n_val:   {len(val_ds)}")
+        # Optional: erste paar Pfade für Kontrolle
+        # print([base.get_path(i) for i in train_idx[:3]])
+
+    return train_loader, val_loader
+
+
 def show_imgEmseTsd(
     img,
     deformedImg,
@@ -418,6 +490,24 @@ def _move_fig_top_right(fig):
     except Exception as e:
         print(f"[show_tsg] Could not move window: {e}")
 
+
+
+def _to_numpy_img(t: torch.Tensor):
+    """
+    Erwartet Tensor [B,C,H,W] oder [C,H,W] in [-1,1].
+    Gibt float32-Numpy-Bild [H,W,3] in [0,1] zurück.
+    """
+    if t.dim() == 4:
+        t = t[0]  # erstes Bild
+    if t.size(0) == 1:
+        t = t.repeat(3, 1, 1)  # Grau -> RGB
+
+    # WICHTIG: float() zwingt fp32 (verhindert Matplotlib-Fehler)
+    img = t.detach().float().cpu().numpy().transpose(1, 2, 0)
+    img = np.clip(img * 0.5 + 0.5, 0.0, 1.0)
+    return img.astype(np.float32)
+
+
 def show_tsg(
     img=None,
     e_extend=None,
@@ -438,82 +528,38 @@ def show_tsg(
 
     # === show original and derived images ===
     try:
-        plt.subplot(3, 4, 1)
-        plt.title('original image')
-        plt.imshow(np.clip(img[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 1); plt.title('original image'); plt.imshow(_to_numpy_img(img))
+    except: pass
     try:
-        plt.subplot(3, 4, 2)
-        plt.title('edge map')
-        plt.imshow(np.clip(e_extend[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 2); plt.title('edge map');       plt.imshow(_to_numpy_img(e_extend))
+    except: pass
     try:
-        plt.subplot(3, 4, 3)
-        plt.title('deformed edge map')
-        plt.imshow(np.clip(e_deformed[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 3); plt.title('deformed edge');  plt.imshow(_to_numpy_img(e_deformed))
+    except: pass
     try:
-        plt.subplot(3, 4, 4)
-        plt.title('blured image')
-        plt.imshow(np.clip(img_blur[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 4); plt.title('blured image');   plt.imshow(_to_numpy_img(img_blur))
+    except: pass
     try:
-        plt.subplot(3, 4, 5)
-        plt.title('image for loss')
-        plt.imshow(np.clip(img_for_loss[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 5); plt.title('image for loss'); plt.imshow(_to_numpy_img(img_for_loss))
+    except: pass
     try:
-        plt.subplot(3, 4, 6)
-        plt.title('gen img s1')
-        plt.imshow(np.clip(G_rough[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 6); plt.title('gen img s1');     plt.imshow(_to_numpy_img(G_rough))
+    except: pass
     try:
-        plt.subplot(3, 4, 7)
-        plt.title('gen img s2')
-        G_fine_f32 = G_fine.float()
-        plt.imshow(np.clip(G_fine_f32[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 7); plt.title('gen img s2');     plt.imshow(_to_numpy_img(G_fine))
+    except: pass
     try:
-        plt.subplot(3, 4, 8)
-        plt.title('resized img s2')
-        plt.imshow(np.clip(G_fine_resized[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 8); plt.title('resized img s2'); plt.imshow(_to_numpy_img(G_fine_resized))
+    except: pass
     try:
-        plt.subplot(3, 4, 9)
-        plt.title('norm res img s2')
-        plt.imshow(np.clip(G_fine_norm[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 9); plt.title('norm res img s2');plt.imshow(_to_numpy_img(G_fine_norm))
+    except: pass
     try:
-        plt.subplot(3, 4, 10)
-        plt.title('edge map gen img s2')
-        plt.imshow(np.clip(e_extend_G_fine[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
-
+        plt.subplot(3, 4, 10);plt.title('edge gen s2');    plt.imshow(_to_numpy_img(e_extend_G_fine))
+    except: pass
     try:
-        plt.subplot(3, 4, 11)
-        plt.title('def map gen img s2')
-        plt.imshow(np.clip(e_edeformed_G_fine[0].cpu().detach().numpy().transpose(1, 2, 0) * 0.5 + 0.5, 0.0, 1.0))
-    except:
-        pass
+        plt.subplot(3, 4, 11);plt.title('def gen s2');     plt.imshow(_to_numpy_img(e_edeformed_G_fine))
+    except: pass
 
     plt.tight_layout()
     plt.show(block=False)       # show the window (non-blocking)
@@ -536,21 +582,27 @@ def show_result(
         *,
         netG
 ):
+    # neue Autocast-API (oder weglassen; unten casten wir sowieso auf fp32 fürs Plotten)
+    autocast_ctx = torch.amp.autocast("cuda") if config.DEVICE.type != "cpu" else nullcontext()
+
     mn_batch = edgeMap.shape[0]
 
     if not print_original:
-        z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(config.DEVICE))
-        if training_stage == 1:
-            img_blur = blur_image(img, config.DOWN_SIZE)
-        else:
-            img_blur = blur_image(img, config.DOWN_SIZE2)
+        # Nur fürs Sampling: eval + inference_mode spart Speicher/grad
         netG.eval()
-        test_images = netG(z_, edgeMap, img_blur)
+        with torch.inference_mode(), autocast_ctx:
+            zdim = getattr(config, "noise_size", 100)
+            z_ = torch.randn((mn_batch, zdim), device=config.DEVICE).view(-1, zdim, 1, 1)
+            img_blur = blur_image(img, config.DOWN_SIZE if training_stage == 1 else config.DOWN_SIZE2)
+            test_images = netG(z_, edgeMap, img_blur)
         netG.train()
         myTitle = 'Generated Images'
     else:
         test_images = img
         myTitle = 'Original Images'
+
+    # >>> WICHTIG: vor dem Plotten in FP32 auf CPU bringen <<<
+    test_images = test_images.detach().float().cpu()  # <-- verhindert Matplotlib-Error
 
     size_figure_grid = int(np.ceil(np.sqrt(mn_batch)))
     fig, ax = plt.subplots(size_figure_grid, size_figure_grid, figsize=(5, 5), squeeze=False)
@@ -563,13 +615,11 @@ def show_result(
         j = k % size_figure_grid
         if i < size_figure_grid and j < size_figure_grid:
             ax[i, j].cla()
-            img = test_images[k].cpu().data.numpy()
-            img = np.transpose(img, (1, 2, 0))
-            img = (img * 0.5) + 0.5
-            img = np.clip(img, 0, 1)
-            ax[i, j].imshow(img)
+            arr = test_images[k].numpy().transpose(1, 2, 0)  # [H,W,C]
+            arr = np.clip(arr * 0.5 + 0.5, 0.0, 1.0).astype(np.float32)  # sicher float32
+            ax[i, j].imshow(arr)
 
-    label = 'Epoch {0}'.format(num_epoch+1)
+    label = f'Epoch {num_epoch+1}'
     fig.text(0.5, 0.04, label, ha='center')
 
     if save:
@@ -588,5 +638,6 @@ def show_result(
     if show:
         plt.show()
     else:
-        plt.close()
+        plt.close(fig)
+
 
