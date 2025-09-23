@@ -9,7 +9,7 @@
 
   "save_all_epochs": false,
 
-  "start_in_stage": 2,
+  "start_in_stage": 1,
 
   "save_path": "./Result",
 
@@ -21,13 +21,13 @@
   "patience_stage1": 15,
   "patience_stage2": 20,
 
-  "path_tuned_D": "./Result/20250905_190135/ImageNet256/best_netD/netD__stage2__Epoch_326.pth",
-  "path_optim_D_stage1": "./Result/20250905_190135/ImageNet256/best_optimD/optimD__stage1__Epoch_169.pth",
-  "path_optim_D_stage2": "./Result/20250905_190135/ImageNet256/best_optimD/optimD__stage2__Epoch_326.pth",
+  "path_tuned_D": "f./Result/20250905_190135/ImageNet256/best_netD/netD__stage2__Epoch_326.pth",
+  "path_optim_D_stage1": "f./Result/20250905_190135/ImageNet256/best_optimD/optimD__stage1__Epoch_169.pth",
+  "path_optim_D_stage2": "f./Result/20250905_190135/ImageNet256/best_optimD/optimD__stage2__Epoch_326.pth",
 
-  "path_tuned_G": "./Result/20250905_190135/ImageNet256/best_netG/netG__stage2__Epoch_326.pth",
-  "path_optim_G_stage1": "./Result/20250905_190135/ImageNet256/best_optimG/optimG__stage1__Epoch_169.pth",
-  "path_optim_G_stage2": "./Result/20250905_190135/ImageNet256/best_optimG/optimG__stage2__Epoch_326.pth",
+  "path_tuned_G": "f./Result/20250905_190135/ImageNet256/best_netG/netG__stage2__Epoch_326.pth",
+  "path_optim_G_stage1": "f./Result/20250905_190135/ImageNet256/best_optimG/optimG__stage1__Epoch_169.pth",
+  "path_optim_G_stage2": "f./Result/20250905_190135/ImageNet256/best_optimG/optimG__stage2__Epoch_326.pth",
 
   "train_with_cls": false,
 
@@ -73,7 +73,8 @@
   "DS_BETA": 17.0,
   "DS_CLOSE_KS": 0,
 
-  "image_size": 256,
+  "image_height": 256,
+  "image_width": 256,
   "noise_size": 100,
 
   "dataset": {

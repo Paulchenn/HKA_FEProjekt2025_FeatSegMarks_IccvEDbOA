@@ -214,6 +214,19 @@ if __name__ == "__main__":
     torch.autograd.set_detect_anomaly(True)
 
 
+    # get image sizes
+    img_h = int(getattr(config, "image_height", 608))
+    img_w = int(getattr(config, "image_width", 800))
+    if img_h == img_w:
+        config.IMG_SIZE = img_h
+    else:
+        print(f"Image height does not match image width. Setting IMG_SIZE to smaller one.")
+        if img_h < img_w:
+            config.IMG_SIZE = img_h
+        else:
+            config.IMG_SIZE = img_w
+
+
     # === Initialize Trainiingclasses ===
     ds_emse   = DS_EMSE(config=config)   # Initialize EMSE class
     emse    = EMSE(config=config)    # Initialize EMSE class
