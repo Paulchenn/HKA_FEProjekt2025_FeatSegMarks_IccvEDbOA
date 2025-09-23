@@ -16,6 +16,7 @@ from utils.helpers import *
 
 import torch
 from torch.autograd import Variable
+from torch.nn import BCEWithLogitsLoss
 import torch.nn.functional as F
 from torchvision import transforms
 from torch import amp
@@ -164,25 +165,21 @@ class EMSE:
         edges = torch.from_numpy(edges).to(self.config.DEVICE)
         return edges
     
-    def rgb2Gray_batch(
-        self,
-        input
-    ):
-        R = input[:, 0]
-        G = input[:, 1]
-        B = input[:, 2]
+    def rgb2Gray_batch(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Erwartet x in [B, C, H, W]; gibt [B, 1, H, W] zurück.
+        Kein Reshape über sqrt – unterstützt rechteckige Bilder.
+        """
+        # Falls bereits 1 Kanal: einfach zurückgeben
+        if x.dim() == 4 and x.size(1) == 1:
+            return x
 
-        # Convert RGB to grayscale using the luminosity method
-        # Using the formula: gray = 0.299 * R + 0.587 * G + 0.114 * B
-        # Factors come from ITU-R BT.601 standard for converting RGB to Y (luminance)
-        # Note: In-place operations are not recommended for gradients, so we avoid them here
-        gray = 0.299 * R + 0.587 * G + 0.114 * B  # No in-place operation
-
-        # Dynamically calculate the height and width
-        height = int((gray.numel() // gray.shape[0]) ** 0.5)
-        width = height
-
-        gray = gray.view(gray.shape[0], 1, height, width)
+        # Standard-RGB → Grauwert, Kanal-Dim beibehalten
+        # (Slice mit :1 erhält die Kanalachse)
+        r = x[:, 0:1]
+        g = x[:, 1:1+1]
+        b = x[:, 2:2+1]
+        gray = 0.299 * r + 0.587 * g + 0.114 * b  # [B,1,H,W]
         return gray
         
     def get_info(
@@ -250,19 +247,26 @@ class TSD:
     """
 
     def __init__(self, config):
+        self.debug_prints = False
         self.config = config
+
+        try:
+            device=self.config.get("device", "cpu")
+        except:
+            device=getattr(self.config, "device", "cpu")
+        print(device)
 
         # Ziel-Gitter (fix, normalisierte Koords [-1,1])
         x = torch.linspace(-1.0, 1.0, steps=5)
         y = torch.linspace(-1.0, 1.0, steps=5)
         self.target_control_points = torch.tensor(
             list(itertools.product(x, y)),
-            device=self.config.DEVICE
+            device=device
         )
-
+        
         # Stärke & Verteilung aus der Config
-        self.lam = getattr(config, "TSD_LAM", getattr(config, "tsd_lam", 0.1))
-        self.dist = getattr(config, "TSD_DIST", getattr(config, "tsd_dist", "uniform"))
+        self.lam = getattr(self.config, "TSD_LAM", getattr(self.config, "tsd_lam", 0.1))
+        self.dist = getattr(self.config, "TSD_DIST", getattr(self.config, "tsd_dist", "uniform"))
 
         self.tps = None  # lazily init mit erstem Call
 
@@ -317,6 +321,7 @@ class TSD:
 
         if grid is None:
             grid = self._build_grid(B, H, W)
+
         out = self.apply_grid(img, grid)
 
         if old_lam is not None:
@@ -332,6 +337,8 @@ class TSG:
 
     def __init__(self, config):
         self.config = config
+        self.debug_prints = False
+        self.bce_logits = BCEWithLogitsLoss()   # stabiler GAN-Loss auf Logits
 
     def myNormalize(self):
         return transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -343,7 +350,8 @@ class TSG:
         deformedImg,
         blurImg
     ):
-        z_ = Variable(torch.randn((mn_batch, 100)).view(-1, 100, 1, 1).to(self.config.DEVICE))
+        zdim = getattr(self.config, "noise_size", 100)
+        z_ = Variable(torch.randn((mn_batch, zdim)).view(-1, 100, 1, 1).to(self.config.DEVICE))
 
         G_result = netG(z_, deformedImg, blurImg)
 
@@ -357,11 +365,11 @@ class TSG:
         netD
     ):
         D_result, aux_output = netD(img)
-        D_result = D_result.squeeze()
+        # D_result = D_result.squeeze()
 
-        D_result_1 = D_result.mean()
+        # D_result_1 = D_result.mean()
 
-        return D_result_1, aux_output
+        return D_result, aux_output
     
 
     def doTSG_stage1_training(
@@ -388,7 +396,7 @@ class TSG:
 
         # === Stage 1: Step 0: Preparations ===
         #pdb.set_trace()
-        autocast_ctx = nullcontext() #amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
+        autocast_ctx = amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
         loss = SimpleNamespace() # Initialize loss variables
         mn_batch = img.shape[0] # get the batch size
 
@@ -418,23 +426,33 @@ class TSG:
         with autocast_ctx:
             # Generate rough image
             #print(f"Got input: {mn_batch}, {e_extend.shape} and {img_blur.shape}")
+            with torch.no_grad():
+                G_rough_1 = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
 
-            G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
-
-            # Discriminator output on real and fake
+            # Discriminator output on real
             D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-            D_result_realImg = D_result_realImg.mean()
-            D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
-            D_result_roughImg = D_result_roughImg.mean()
-            D_celoss = CE_loss(aux_output_realImg, label)
-            loss.D_loss = -D_result_realImg + D_result_roughImg + 0.5 * D_celoss
+            # D_result_realImg = D_result_realImg.mean()
+            valid = torch.ones_like(D_result_realImg)
+
+            # Discriminator output on fake
+            D_result_roughImg_1, _ = self.getDResult(G_rough_1, netD)
+            # D_result_roughImg = D_result_roughImg.mean()
+            fake_1 = torch.zeros_like(D_result_roughImg_1)
+
+            loss.D_loss = self.bce_logits(D_result_realImg, valid) + self.bce_logits(D_result_roughImg_1, fake_1)
+
+            if aux_output_realImg is not None:
+                D_celoss = CE_loss(aux_output_realImg, label)
+                if self.debug_prints:
+                    print(f"[TSG] D_celoss S1 training: {D_celoss}")
+                loss.D_loss = loss.D_loss + 0.5 * D_celoss
 
         # === Train Discriminator ===
-        netD.zero_grad()
-        optimD.zero_grad()
-        scaler.scale(loss.D_loss).backward(retain_graph=True)
-        scaler.step(optimD)
-        scaler.update()
+        netD.zero_grad(); optimD.zero_grad()
+        scaler.scale(loss.D_loss).backward()
+        scaler.unscale_(optimD)  # <- wichtig
+        torch.nn.utils.clip_grad_norm_(netD.parameters(), 5.0)
+        scaler.step(optimD); scaler.update()
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
@@ -444,39 +462,50 @@ class TSG:
         time_startTrainG1 = time.time()
 
         with autocast_ctx:
+            # Generate rough image
+            G_rough_2 = self.generateImg(mn_batch, netG, e_extend, img_blur)
+
+            # Discriminator output on fake
+            D_result_roughImg_2, aux_output_roughImg_2 = self.getDResult(G_rough_2, netD)
+            fake_2 = torch.ones_like(D_result_roughImg_2)
+
+            # stabiler GAN-Loss
+            D_result_roughImg_2 = self.bce_logits(D_result_roughImg_2, fake_2)
+
             # === Edge preservation loss (Ledge) ===
-            e_extend_G_rough = ds_emse.diff_edge_map(G_rough)                          # [B,1,H,W]
+            e_extend_G_rough = ds_emse.diff_edge_map(G_rough_2)                          # [B,1,H,W]
             # e_extend_G_rough = emse.doEMSE(G_rough.detach())
             edge_loss = L1_loss(e_extend_G_rough, e_extend)
 
             # e_extend_G_rough = emse.doEMSE(G_rough.detach())
             # edge_loss = L1_loss(e_extend_G_rough, e_extend)
-
-            # call discriminator again due to inplace-error
-            D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
-            D_result_roughImg = D_result_roughImg.mean()
             
             img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-            G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
-            G_celoss_rough = CE_loss(aux_output_roughImg, label).sum()
+            G_L1_loss_rough = L1_loss(G_rough_2, img_for_loss)
+            
+            if self.debug_prints:
+                print(f"[TSG] aux_output_roughImg training: {aux_output_roughImg_2}")
+            if aux_output_roughImg_2 is not None:
+                G_celoss_rough = CE_loss(aux_output_roughImg_2, label)
+            else:
+                G_celoss_rough = torch.tensor(0.0).to(config.DEVICE)
 
-            # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
             lambda_L1 = config.LAMBDA_S1_L1 # original: 1.0
             lamda_GAN = config.LAMBDA_S1_GAN # original: 1.0
             lambda_CE = config.LAMBDA_S1_CE # original: 0.5
             lambda_edge = config.LAMBDA_S1_EDGE
             loss.G_loss = (
                 lambda_L1 * G_L1_loss_rough
-                - lamda_GAN * D_result_roughImg
+                + lamda_GAN * D_result_roughImg_2
                 + lambda_CE * G_celoss_rough
                 + lambda_edge * edge_loss
-            )
+                )
 
-        netG.zero_grad()
-        optimG.zero_grad()
+        netG.zero_grad(); optimG.zero_grad()
         scaler.scale(loss.G_loss).backward()
-        scaler.step(optimG)
-        scaler.update()
+        scaler.unscale_(optimG)  # <- wichtig
+        torch.nn.utils.clip_grad_norm_(netG.parameters(), 5.0)
+        scaler.step(optimG); scaler.update()
         
         # get time needed for generator training in stage 1
         time_TSG.time_trainG1.append(time.time() - time_startTrainG1)
@@ -488,7 +517,7 @@ class TSG:
                 e_extend=e_extend,
                 img_blur=img_blur,
                 img_for_loss=img_for_loss,
-                G_rough=G_rough,
+                G_rough=G_rough_2,
             )
 
         return netD, netG, optimD, optimG, loss, time_TSG
@@ -522,7 +551,7 @@ class TSG:
         
         # === Stage 2: Step 0: Preparations ===
         #pdb.set_trace()
-        autocast_ctx = nullcontext() #amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
+        autocast_ctx = amp.autocast(device_type="cuda") if config.DEVICE.type != "cpu" else nullcontext()
         loss = SimpleNamespace() # Initialize loss variables
         mn_batch = img.shape[0] # get the batch size
 
@@ -535,23 +564,33 @@ class TSG:
         time_startTrainD = time.time()
 
         with autocast_ctx:
-            # Generate fine image
-            G_fine = self.generateImg(mn_batch, netG, e_deformed, img_blur)  # Input: edge deformed + blurred image
+            # Generate fine image from deformed edge map
+            with torch.no_grad():
+                G_fine_1 = self.generateImg(mn_batch, netG, e_deformed, img_blur)  # Input: edge deformed + blurred image
 
             # Discriminator output on real and fake
             D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-            D_result_realImg = D_result_realImg.mean()
-            D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
-            D_result_fineImg = D_result_fineImg.mean()
-            D_celoss = CE_loss(aux_output_realImg, label)
-            loss.D_loss = -D_result_realImg + D_result_fineImg + 0.5 * D_celoss
+            # D_result_realImg = D_result_realImg.mean()
+            valid = torch.ones_like(D_result_realImg)
+
+            D_result_fineImg_1, _ = self.getDResult(G_fine_1, netD)
+            # D_result_fineImg = D_result_fineImg.mean()
+            fake_1 = torch.zeros_like(D_result_fineImg_1)
+
+            loss.D_loss = self.bce_logits(D_result_realImg, valid) + self.bce_logits(D_result_fineImg_1, fake_1)
+
+            if aux_output_realImg is not None:
+                D_celoss = CE_loss(aux_output_realImg, label)
+                if self.debug_prints:
+                    print(f"[TSG] D_celoss S2 training: {D_celoss}")
+                loss.D_loss = loss.D_loss + 0.5 * D_celoss
 
         # === Train Discriminator ===
-        netD.zero_grad()
-        optimD.zero_grad()
-        scaler.scale(loss.D_loss).backward(retain_graph=True)
-        scaler.step(optimD)
-        scaler.update()
+        netD.zero_grad(); optimD.zero_grad()
+        scaler.scale(loss.D_loss).backward()
+        scaler.unscale_(optimD)  # <- wichtig
+        torch.nn.utils.clip_grad_norm_(netD.parameters(), 5.0)
+        scaler.step(optimD); scaler.update()
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
@@ -561,10 +600,13 @@ class TSG:
         time_startTrainG2 = time.time()
 
         with autocast_ctx:
+            # Generate fine image from deformed edge map
+            G_fine_2 = self.generateImg(mn_batch, netG, e_deformed, img_blur)
+
             # === Classifier Loss ===
             time_startTrainCls = time.time()
             if config.TRAIN_WITH_CLS:
-                G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
+                G_fine_resized = F.interpolate(G_fine_2, size=(299, 299), mode='bilinear', align_corners=False)
                 if G_fine_resized.shape[1] == 1:
                     G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
                 G_fine_norm = transform_cls(G_fine_resized)
@@ -576,8 +618,15 @@ class TSG:
                 G_fine_norm = None
             time_TSG.time_trainCls.append(time.time() - time_startTrainCls)
 
+            # Discriminator output on fake
+            D_result_fineImg_2, aux_output_fineImg_2 = self.getDResult(G_fine_2, netD)
+            fake_2 = torch.ones_like(D_result_fineImg_2)
+
+            # stabiler GAN-Loss
+            D_result_fineImg_2 = self.bce_logits(D_result_fineImg_2, fake_2)
+
             # === Edge preservation loss (Ledge) ===
-            e_extend_G_fine = ds_emse.diff_edge_map(G_fine)                          # [B,1,H,W]
+            e_extend_G_fine = ds_emse.diff_edge_map(G_fine_2)                          # [B,1,H,W]
             # e_extend_G_rough = emse.doEMSE(G_rough.detach())
             edge_loss = L1_loss(e_extend_G_fine, e_deformed)
 
@@ -586,8 +635,6 @@ class TSG:
 
             # === Generator loss ===
             # call discriminator again due to inplace-error
-            D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
-            D_result_fineImg = D_result_fineImg.mean()
             img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
             # NEU: nur deformieren, wenn wir gegen das deformierte GT vergleichen wollen
             if not getattr(config, "L1_COMPARE_TO_ORIG", False):
@@ -596,8 +643,14 @@ class TSG:
                 else:
                     img_for_loss = tsd.doTSD(img_for_loss)
 
-            G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
-            G_celoss_fine = CE_loss(aux_output_fineImg, label).sum()
+            G_L1_loss_fine = L1_loss(G_fine_2, img_for_loss)
+            
+            if self.debug_prints:
+                print(f"[TSG] aux_output_fineImg training: {aux_output_fineImg_2}")
+            if aux_output_fineImg_2 is not None:
+                G_celoss_fine = CE_loss(aux_output_fineImg_2, label)
+            else:
+                G_celoss_fine = torch.tensor(0.0).to(config.DEVICE)
 
             # Total loss = GAN + Classification + Shape-Preservation
             lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
@@ -607,17 +660,17 @@ class TSG:
             lambda_edge = config.LAMBDA_S2_EDGE # original: 1.0
             loss.G_loss = (
                 lambda_L1 * G_L1_loss_fine
-                - lamda_GAN * D_result_fineImg
+                + lamda_GAN * D_result_fineImg_2
                 + lambda_CE * G_celoss_fine
                 + lambda_cls * loss.cls_loss
                 + lambda_edge * edge_loss
             )
 
-        netG.zero_grad()
-        optimG.zero_grad()
+        netG.zero_grad(); optimG.zero_grad()
         scaler.scale(loss.G_loss).backward()
-        scaler.step(optimG)
-        scaler.update()
+        scaler.unscale_(optimG)  # <- wichtig
+        torch.nn.utils.clip_grad_norm_(netG.parameters(), 5.0)
+        scaler.step(optimG); scaler.update()
         
         time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
 
@@ -627,7 +680,7 @@ class TSG:
                 e_deformed=e_deformed,
                 img_blur=img_blur,
                 img_for_loss=img_for_loss,
-                G_fine=G_fine,
+                G_fine=G_fine_2,
                 G_fine_resized=G_fine_resized,
                 G_fine_norm=G_fine_norm,
                 e_extend_G_fine=e_extend_G_fine
@@ -667,28 +720,48 @@ class TSG:
             # === Stage 1: Step 1: Precompute blurred texture map Itxt ===
             img_blur = blur_image(img, config.DOWN_SIZE)  # corresponds to Itxt in the paper
 
+
             # === Stage 1: Step 2: Discriminator validation ===
             with autocast_ctx:
                 # Generate rough image from extended edge map and blurred image
                 #print(f"Got input: {mn_batch}, {e_extend.shape} and {img_blur.shape}")
-                G_rough = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
-                G_rough = G_rough.contiguous()
+                with torch.no_grad():
+                    G_rough_1 = self.generateImg(mn_batch, netG, e_extend, img_blur)  # Input: edge + blurred image
+                # G_rough_1 = G_rough_1.contiguous()
 
-                # Discriminator output on real and fake
+                # Discriminator output on real
                 D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-                D_result_realImg = D_result_realImg.mean()
-                D_result_roughImg, aux_output_roughImg = self.getDResult(G_rough, netD)
-                D_result_roughImg = D_result_roughImg.mean()
+                # D_result_realImg = D_result_realImg.mean()
+                valid = torch.ones_like(D_result_realImg)
 
-                # === Validate Discriminator ===
-                D_celoss = CE_loss(aux_output_realImg, label)
-                loss.D_loss = -D_result_realImg + D_result_roughImg + 0.5 * D_celoss
+                # Discriminator output on fake
+                D_result_roughImg_1, _ = self.getDResult(G_rough_1, netD)
+                # D_result_roughImg = D_result_roughImg.mean()
+                fake_1 = torch.zeros_like(D_result_roughImg_1)
+
+                loss.D_loss = self.bce_logits(D_result_realImg, valid) + self.bce_logits(D_result_roughImg_1, fake_1)
+
+                if aux_output_realImg is not None:
+                    D_celoss = CE_loss(aux_output_realImg, label)
+                    if self.debug_prints:
+                        print(f"[TSG] D_celoss S1 training: {D_celoss}")
+                    loss.D_loss = loss.D_loss + 0.5 * D_celoss
 
 
-            # === Stage 2: Step 3: Generator validation ===
+            # === Stage 1: Step 3: Generator validation ===
             with autocast_ctx:
+                # Generate rough image
+                G_rough_2 = self.generateImg(mn_batch, netG, e_extend, img_blur)
+
+                # Discriminator output on fake
+                D_result_roughImg_2, aux_output_roughImg_2 = self.getDResult(G_rough_2, netD)
+                fake_2 = torch.ones_like(D_result_roughImg_2)
+
+                # stabiler GAN-Loss
+                D_result_roughImg_2 = self.bce_logits(D_result_roughImg_2, fake_2)
+                
                 # === Edge preservation loss (Ledge) ===
-                e_extend_G_rough = ds_emse.diff_edge_map(G_rough)                          # [B,1,H,W]
+                e_extend_G_rough = ds_emse.diff_edge_map(G_rough_2)                          # [B,1,H,W]
                 # e_extend_G_rough = emse.doEMSE(G_rough.detach())
                 edge_loss = L1_loss(e_extend_G_rough, e_extend)
 
@@ -696,20 +769,25 @@ class TSG:
                 # edge_loss = L1_loss(e_extend_G_rough, e_extend)
                 
                 img_for_loss = img.repeat(1, 3, 1, 1) if img.shape[1] == 1 else img
-                G_L1_loss_rough = L1_loss(G_rough, img_for_loss)
-                G_celoss_rough = CE_loss(aux_output_roughImg, label).sum()
+                G_L1_loss_rough = L1_loss(G_rough_2, img_for_loss)
 
-                # Total generator loss: L1 + GAN + classification (no edge loss in phase 1)
+                if self.debug_prints:
+                    print(f"[TSG] aux_output_roughImg validating: {aux_output_roughImg_2}")
+                if aux_output_roughImg_2 is not None:
+                    G_celoss_rough = CE_loss(aux_output_roughImg_2, label)
+                else:
+                    G_celoss_rough = torch.tensor(0.0).to(config.DEVICE)
+
                 lambda_L1 = config.LAMBDA_S1_L1 # original: 1.0
                 lamda_GAN = config.LAMBDA_S1_GAN # original: 1.0
                 lambda_CE = config.LAMBDA_S1_CE # original: 0.5
                 lambda_edge = config.LAMBDA_S1_EDGE
                 loss.G_loss = (
                     lambda_L1 * G_L1_loss_rough
-                    - lamda_GAN * D_result_roughImg
+                    + lamda_GAN * D_result_roughImg_2
                     + lambda_CE * G_celoss_rough
                     + lambda_edge * edge_loss
-                )
+                    )
 
             return loss
     
@@ -722,7 +800,7 @@ class TSG:
         tsd,
         img,
         label,
-        e_extend,
+        e_deformed,
         netD,
         netG,
         cls,
@@ -737,7 +815,8 @@ class TSG:
         with torch.no_grad():
             netG.eval()
             netD.eval()
-            cls.eval()
+            if cls:
+                cls.eval()
 
             # === Stage 2: Step 0: Preparations ===
             # pdb.set_trace()
@@ -753,25 +832,36 @@ class TSG:
             # === Stage 2: Step 2: Discriminator validation with fine image ===
             with autocast_ctx:
                 # Generate fine image from deformed edge map
-                G_fine = self.generateImg(mn_batch, netG, e_extend, img_blur)
-                G_fine = G_fine.contiguous()
+                with torch.no_grad():
+                    G_fine_1 = self.generateImg(mn_batch, netG, e_deformed, img_blur)  # Input: edge deformed + blurred image
+                # G_fine_1 = G_fine_1.contiguous()
 
                 # Discriminator output on real and fake
                 D_result_realImg, aux_output_realImg = self.getDResult(img, netD)
-                D_result_realImg = D_result_realImg.mean()
-                D_result_fineImg, aux_output_fineImg = self.getDResult(G_fine, netD)
-                D_result_fineImg = D_result_fineImg.mean()
+                # D_result_realImg = D_result_realImg.mean()
+                valid = torch.ones_like(D_result_realImg)
 
-                # === Validate Discriminator ===
-                D_celoss = CE_loss(aux_output_realImg, label)
-                loss.D_loss = -D_result_realImg + D_result_fineImg + 0.5*D_celoss
+                D_result_fineImg_1, _ = self.getDResult(G_fine_1, netD)
+                # D_result_fineImg = D_result_fineImg.mean()
+                fake_1 = torch.zeros_like(D_result_fineImg_1)
+
+                loss.D_loss = self.bce_logits(D_result_realImg, valid) + self.bce_logits(D_result_fineImg_1, fake_1)
+
+                if aux_output_realImg is not None:
+                    D_celoss = CE_loss(aux_output_realImg, label)
+                    if self.debug_prints:
+                        print(f"[TSG] D_celoss S2 training: {D_celoss}")
+                    loss.D_loss = loss.D_loss + 0.5 * D_celoss
 
 
             # === Stage 2: Step 3: Generator validation with fine image ===
             with autocast_ctx:
+                # Generate fine image from deformed edge map
+                G_fine_2 = self.generateImg(mn_batch, netG, e_deformed, img_blur)
+
                 # === Classifier Loss ===
                 if config.TRAIN_WITH_CLS:
-                    G_fine_resized = F.interpolate(G_fine, size=(299, 299), mode='bilinear', align_corners=False)
+                    G_fine_resized = F.interpolate(G_fine_2, size=(299, 299), mode='bilinear', align_corners=False)
                     if G_fine_resized.shape[1] == 1:
                         G_fine_resized = G_fine_resized.repeat(1, 3, 1, 1)
                     G_fine_norm = transform_cls(G_fine_resized)
@@ -782,10 +872,17 @@ class TSG:
                     loss.cls_loss = torch.tensor(0.0).to(config.DEVICE)
                     cls_prediction = None
 
+                # Discriminator output on fake
+                D_result_fineImg_2, aux_output_fineImg_2 = self.getDResult(G_fine_2, netD)
+                fake_2 = torch.ones_like(D_result_fineImg_2)
+
+                # stabiler GAN-Loss
+                D_result_fineImg_2 = self.bce_logits(D_result_fineImg_2, fake_2)
+
                 # === Edge preservation loss (Ledge) ===
-                e_extend_G_fine = ds_emse.diff_edge_map(G_fine)                          # [B,1,H,W]
+                e_extend_G_fine = ds_emse.diff_edge_map(G_fine_2)                          # [B,1,H,W]
                 # e_extend_G_rough = emse.doEMSE(G_rough.detach())
-                edge_loss = L1_loss(e_extend_G_fine, e_extend)
+                edge_loss = L1_loss(e_extend_G_fine, e_deformed)
 
                 # emse_G_fine = emse.doEMSE(G_fine.detach())
                 # edge_loss = L1_loss(emse_G_fine, e_deformed)
@@ -799,8 +896,14 @@ class TSG:
                     else:
                         img_for_loss = tsd.doTSD(img_for_loss)
 
-                G_L1_loss_fine = L1_loss(G_fine, img_for_loss)
-                G_celoss_fine = CE_loss(aux_output_fineImg, label).sum()
+                G_L1_loss_fine = L1_loss(G_fine_2, img_for_loss)
+
+                if self.debug_prints:
+                    print(f"[TSG] aux_output_fineImg validating: {aux_output_fineImg_2}")
+                if aux_output_fineImg_2 is not None:
+                    G_celoss_fine = CE_loss(aux_output_fineImg_2, label)
+                else:
+                    G_celoss_fine = torch.tensor(0.0).to(config.DEVICE)
 
                 # Total loss = GAN + Classification + Shape-Preservation
                 lambda_L1 = config.LAMBDA_S2_L1 # original: 1.0
@@ -810,7 +913,7 @@ class TSG:
                 lambda_edge = config.LAMBDA_S2_EDGE # original: 1.0
                 loss.G_loss = (
                     lambda_L1 * G_L1_loss_fine
-                    - lamda_GAN * D_result_fineImg
+                    + lamda_GAN * D_result_fineImg_2
                     + lambda_CE * G_celoss_fine
                     + lambda_cls * loss.cls_loss
                     + lambda_edge * edge_loss
