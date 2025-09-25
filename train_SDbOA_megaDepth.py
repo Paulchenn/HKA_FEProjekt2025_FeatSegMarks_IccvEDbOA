@@ -346,24 +346,24 @@ if __name__ == "__main__":
 
 
     # === Initialize optimizers ===
-    optimD_stage1 = optim.Adam(netD.parameters(), lr=config.LR_D_S1, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
-    optimD_stage2 = optim.Adam(netD.parameters(), lr=config.LR_D_S2, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
     optimG_stage1 = optim.Adam(netG.parameters(), lr=config.LR_G_S1, betas=(0.5, 0.99))     # Optimizer for Generator (GAN-typical Betas)
     optimG_stage2 = optim.Adam(netG.parameters(), lr=config.LR_G_S2, betas=(0.5, 0.99))     # Optimizer for Generator (GAN-typical Betas)
-
-    if os.path.exists(config.PATH_OPTIM_D_S1):
-        optimD_stage1.load_state_dict(torch.load(config.PATH_OPTIM_D_S1))
-        print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_OPTIM_D_S1}")
-    if os.path.exists(config.PATH_OPTIM_D_S2):
-        optimD_stage2.load_state_dict(torch.load(config.PATH_OPTIM_D_S2))
-        print(f"Loaded Discriminator-Opitmizer checkpoint from {config.PATH_OPTIM_D_S2}")
+    optimD_stage1 = optim.Adam(netD.parameters(), lr=config.LR_D_S1, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
+    optimD_stage2 = optim.Adam(netD.parameters(), lr=config.LR_D_S2, betas=(0., 0.99))    # Optimizer for Discriminator (GAN-typical Betas)
 
     if os.path.exists(config.PATH_OPTIM_G_S1):
         optimG_stage1.load_state_dict(torch.load(config.PATH_OPTIM_G_S1))
-        print(f"Loaded Generator-Optimizer checkpoint from {config.PATH_OPTIM_G_S1}")
+        print(f"Loaded Generator-Optimizer Stage 1 checkpoint from {config.PATH_OPTIM_G_S1}")
     if os.path.exists(config.PATH_OPTIM_G_S2):
         optimG_stage2.load_state_dict(torch.load(config.PATH_OPTIM_G_S2))
-        print(f"Loaded Generator-Optimizer checkpoint from {config.PATH_OPTIM_G_S2}")
+        print(f"Loaded Generator-Optimizer Stage 2 checkpoint from {config.PATH_OPTIM_G_S2}")
+
+    if os.path.exists(config.PATH_OPTIM_D_S1):
+        optimD_stage1.load_state_dict(torch.load(config.PATH_OPTIM_D_S1))
+        print(f"Loaded Discriminator-Opitmizer Stage 1 checkpoint from {config.PATH_OPTIM_D_S1}")
+    if os.path.exists(config.PATH_OPTIM_D_S2):
+        optimD_stage2.load_state_dict(torch.load(config.PATH_OPTIM_D_S2))
+        print(f"Loaded Discriminator-Opitmizer Stage 2 checkpoint from {config.PATH_OPTIM_D_S2}")
 
     # === Initialize Scheduler ===
     scheduler_mode = 'min'
