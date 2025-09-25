@@ -448,11 +448,14 @@ class TSG:
                 loss.D_loss = loss.D_loss + 0.5 * D_celoss
 
         # === Train Discriminator ===
-        netD.zero_grad(); optimD.zero_grad()
-        scaler.scale(loss.D_loss).backward()
-        scaler.unscale_(optimD)  # <- wichtig
-        torch.nn.utils.clip_grad_norm_(netD.parameters(), 5.0)
-        scaler.step(optimD); scaler.update()
+        try:
+            netD.zero_grad(); optimD.zero_grad()
+            scaler.scale(loss.D_loss).backward()
+            scaler.unscale_(optimD)
+            torch.nn.utils.clip_grad_norm_(netD.parameters(), 5.0)
+            scaler.step(optimD); scaler.update()
+        except:
+            print("[WARN] D_loss not finite → skip D step")
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
@@ -501,11 +504,14 @@ class TSG:
                 + lambda_edge * edge_loss
                 )
 
-        netG.zero_grad(); optimG.zero_grad()
-        scaler.scale(loss.G_loss).backward()
-        scaler.unscale_(optimG)  # <- wichtig
-        torch.nn.utils.clip_grad_norm_(netG.parameters(), 5.0)
-        scaler.step(optimG); scaler.update()
+        try:
+            netG.zero_grad(); optimG.zero_grad()
+            scaler.scale(loss.G_loss).backward()
+            scaler.unscale_(optimG)
+            torch.nn.utils.clip_grad_norm_(netG.parameters(), 5.0)
+            scaler.step(optimG); scaler.update()
+        except:
+            print("[WARN] G_loss not finite → skip G step")
         
         # get time needed for generator training in stage 1
         time_TSG.time_trainG1.append(time.time() - time_startTrainG1)
@@ -586,11 +592,14 @@ class TSG:
                 loss.D_loss = loss.D_loss + 0.5 * D_celoss
 
         # === Train Discriminator ===
-        netD.zero_grad(); optimD.zero_grad()
-        scaler.scale(loss.D_loss).backward()
-        scaler.unscale_(optimD)  # <- wichtig
-        torch.nn.utils.clip_grad_norm_(netD.parameters(), 5.0)
-        scaler.step(optimD); scaler.update()
+        try:
+            netD.zero_grad(); optimD.zero_grad()
+            scaler.scale(loss.D_loss).backward()
+            scaler.unscale_(optimD)
+            torch.nn.utils.clip_grad_norm_(netD.parameters(), 5.0)
+            scaler.step(optimD); scaler.update()
+        except:
+            print("[WARN] D_loss not finite → skip D step")
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
@@ -666,11 +675,14 @@ class TSG:
                 + lambda_edge * edge_loss
             )
 
-        netG.zero_grad(); optimG.zero_grad()
-        scaler.scale(loss.G_loss).backward()
-        scaler.unscale_(optimG)  # <- wichtig
-        torch.nn.utils.clip_grad_norm_(netG.parameters(), 5.0)
-        scaler.step(optimG); scaler.update()
+        try:
+            netG.zero_grad(); optimG.zero_grad()
+            scaler.scale(loss.G_loss).backward()
+            scaler.unscale_(optimG)
+            torch.nn.utils.clip_grad_norm_(netG.parameters(), 5.0)
+            scaler.step(optimG); scaler.update()
+        except:
+            print("[WARN] G_loss not finite → skip G step")
         
         time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
 
