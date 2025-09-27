@@ -21,7 +21,7 @@ def compute_partial_repr(input_points, control_points):
 
 class TPSGridGen(nn.Module):
 
-    def __init__(self, config, target_height, target_width, target_control_points):
+    def __init__(self, config, target_height, target_width, target_control_points, device=None):
         super(TPSGridGen, self).__init__()
         assert target_control_points.ndimension() == 2
         assert target_control_points.size(1) == 2
@@ -31,11 +31,16 @@ class TPSGridGen(nn.Module):
 
         self.config = config
 
-        try:
-            self.device=self.config.get("device", "cpu")
-        except:
-            self.device=getattr(self.config, "device", "cpu")
-        print(self.device)
+        self.debug_prints = False
+
+        if device is None:
+            try:
+                device=self.config.get("device", "cpu")
+            except:
+                device=getattr(self.config, "device", "cpu")
+        self.device = device
+        if self.debug_prints:
+            print(f"[TPSGridGen][Init] Device: {device}")
 
         # create padded kernel matrix
         forward_kernel = torch.zeros(N + 3, N + 3).to(self.device)

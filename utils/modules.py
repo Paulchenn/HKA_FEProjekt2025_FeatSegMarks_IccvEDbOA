@@ -246,22 +246,25 @@ class TSD:
     TPS - Thin-plate spline
     """
 
-    def __init__(self, config):
-        self.debug_prints = False
+    def __init__(self, config, device=None):
+        self.debug_prints = True
         self.config = config
 
-        try:
-            device=self.config.get("device", "cpu")
-        except:
-            device=getattr(self.config, "device", "cpu")
-        print(device)
+        if device is None:
+            try:
+                device=self.config.get("device", "cpu")
+            except:
+                device=getattr(self.config, "device", "cpu")
+        self.device=device
+        if self.debug_prints:
+            print(f"[TSD][Init] Device: {self.device}")
 
         # Ziel-Gitter (fix, normalisierte Koords [-1,1])
         x = torch.linspace(-1.0, 1.0, steps=5)
         y = torch.linspace(-1.0, 1.0, steps=5)
         self.target_control_points = torch.tensor(
             list(itertools.product(x, y)),
-            device=device
+            device=self.device
         )
         
         # Stärke & Verteilung aus der Config
@@ -280,7 +283,7 @@ class TSD:
 
     def _ensure_tps(self, height, width):
         if self.tps is None:
-            self.tps = TPSGridGen(self.config, height, width, self.target_control_points)
+            self.tps = TPSGridGen(self.config, height, width, self.target_control_points, device=self.device)
 
     def _build_grid(self, batch_size, height, width):
         self._ensure_tps(height, width)
@@ -456,6 +459,7 @@ class TSG:
             scaler.step(optimD); scaler.update()
         except:
             print("[WARN] D_loss not finite → skip D step")
+            #TODO: delete losses
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
@@ -512,6 +516,7 @@ class TSG:
             scaler.step(optimG); scaler.update()
         except:
             print("[WARN] G_loss not finite → skip G step")
+            #TODO: delete losses
         
         # get time needed for generator training in stage 1
         time_TSG.time_trainG1.append(time.time() - time_startTrainG1)
@@ -600,6 +605,7 @@ class TSG:
             scaler.step(optimD); scaler.update()
         except:
             print("[WARN] D_loss not finite → skip D step")
+            #TODO: delete losses
 
         # get time needed for disciminator training
         time_TSG.time_trainD.append(time.time() - time_startTrainD)
@@ -683,6 +689,7 @@ class TSG:
             scaler.step(optimG); scaler.update()
         except:
             print("[WARN] G_loss not finite → skip G step")
+            #TODO: delete losses
         
         time_TSG.time_trainG2.append(time.time() - time_startTrainG2)
 
