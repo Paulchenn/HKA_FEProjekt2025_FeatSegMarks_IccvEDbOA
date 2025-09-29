@@ -126,7 +126,7 @@ def train_classifier(config):
         # Save best model
         if val_acc > best_acc:
             best_acc = val_acc
-            torch.save(cls.state_dict(), os.path.join(config.SAVE_PATH, "best_cls.pth"))
+            torch.save(cls.state_dict(), os.path.join(config.SAVE_PATH_CLS, "best_cls.pth"))
             print(f"[Checkpoint] Saved new best model (acc={best_acc:.2f}%)")
 
 
@@ -135,12 +135,13 @@ if __name__ == "__main__":
     from utils.helpers import get_config
     import json
 
-    config = get_config("config/config.json")
+    config = get_config("code/SDbOA/config/config.json")
 
     # Add classifier-specific params
     config.IMG_SIZE = getattr(config, "image_size", 256)
     config.LR_CLS = 1e-4
     config.EPOCHS_CLS = 200
+    config.SAVE_PATH_CLS = getattr(config, "save_path", "./Result") + "/cls_training_imageNet"
 
     # Device
     config.DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
