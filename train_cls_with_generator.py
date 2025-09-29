@@ -7,8 +7,8 @@ from torchvision import transforms, models
 from torchvision.models import ResNet18_Weights
 from tqdm import tqdm
 
-from utils.helpers import get_config, get_train_val_loaders
-from utils.modules import EMSE, DS_EMSE, TSD
+from utils.helpers import get_config, get_train_val_loaders, blur_image
+from utils.modules import EMSE, DS_EMSE, TSD, TSG
 from models import generation_imageNet_V2_2 as generation_imageNet
 
 
@@ -42,6 +42,7 @@ def train_classifier(config):
     emse = EMSE(config=config)
     ds_emse = DS_EMSE(config=config)
     tsd = TSD(config=config)
+    tsg = TSG(config=config)
 
     netG = generation_imageNet.generator(img_size=config.IMG_SIZE,
                                          z_dim=config.NOISE_SIZE).to(config.DEVICE)
@@ -49,6 +50,8 @@ def train_classifier(config):
         checkpoint = torch.load(config.PATH_TUNED_G, map_location=config.DEVICE)
         netG.load_state_dict(checkpoint, strict=False)
         print(f"[Init] Loaded Generator weights from {config.PATH_TUNED_G}")
+    else:
+        print(f"[Init] Not loaded any Generator weights from {config.PATH_TUNED_G}")
     netG.eval()
 
     # === Classifier ===
@@ -75,9 +78,10 @@ def train_classifier(config):
 
             # === Pipeline: EMSE → DS_EMSE → TSD → Generator ===
             with torch.no_grad():
+                img_blur = blur_image(imgs, config.DOWN_SIZE)
                 edgeMap = ds_emse.diff_edge_map(imgs)
                 deformedEdge, tsd_grid = tsd.doTSD(edgeMap, return_grid=True)
-                gen_imgs = netG(deformedEdge)  # Generator output
+                gen_imgs = tsg.generateImg(imgs.shape[0], netG, deformedEdge, img_blur)
 
             # === Forward through classifier ===
             outputs = cls(gen_imgs)
@@ -104,9 +108,10 @@ def train_classifier(config):
         with torch.no_grad():
             for imgs, labels in val_loader:
                 imgs, labels = imgs.to(config.DEVICE), labels.to(config.DEVICE)
+                img_blur = blur_image(imgs, config.DOWN_SIZE)
                 edgeMap = ds_emse.diff_edge_map(imgs)
                 deformedEdge, tsd_grid = tsd.doTSD(edgeMap, return_grid=True)
-                gen_imgs = netG(deformedEdge)
+                gen_imgs = tsg.generateImg(imgs.shape[0], netG, deformedEdge, img_blur)
 
                 outputs = cls(gen_imgs)
                 _, preds = outputs.max(1)
@@ -135,7 +140,7 @@ if __name__ == "__main__":
     # Add classifier-specific params
     config.IMG_SIZE = getattr(config, "image_size", 256)
     config.LR_CLS = 1e-4
-    config.EPOCHS_CLS = 20
+    config.EPOCHS_CLS = 200
 
     # Device
     config.DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
