@@ -39,7 +39,6 @@ def train_classifier(config):
     )
 
     # === Generator & Preprocessing Modules ===
-    emse = EMSE(config=config)
     ds_emse = DS_EMSE(config=config)
     tsd = TSD(config=config)
     tsg = TSG(config=config)
@@ -56,7 +55,7 @@ def train_classifier(config):
 
     # === Classifier ===
     cls_weights = ResNet18_Weights.DEFAULT
-    cls = models.resnet18(weights=cls_weights)
+    cls = models.resnet18(weights=None)
     cls.fc = nn.Linear(cls.fc.in_features, config.NUM_CLASSES)
     cls = cls.to(config.DEVICE)
 
@@ -73,10 +72,13 @@ def train_classifier(config):
         total = 0
 
         pbar = tqdm(train_loader, desc=f"Train Epoch {epoch+1}", ncols=100)
+        # i = 0
         for imgs, labels in pbar:
+            # if i > 0:
+            #     break
             imgs, labels = imgs.to(config.DEVICE), labels.to(config.DEVICE)
 
-            # === Pipeline: EMSE → DS_EMSE → TSD → Generator ===
+            # === Pipeline: DS_EMSE → TSD → Generator ===
             with torch.no_grad():
                 img_blur = blur_image(imgs, config.DOWN_SIZE)
                 edgeMap = ds_emse.diff_edge_map(imgs)
@@ -98,6 +100,8 @@ def train_classifier(config):
 
             pbar.set_postfix(loss=f"{loss.item():.3f}",
                              acc=f"{100.*correct/total:.2f}%")
+            
+            # i += 1
 
         train_loss = running_loss / total
         train_acc = 100. * correct / total
@@ -105,9 +109,13 @@ def train_classifier(config):
         # === Validation ===
         cls.eval()
         val_correct, val_total = 0, 0
+        # i = 0
         with torch.no_grad():
             for imgs, labels in val_loader:
+                # if i > 0:
+                #     break
                 imgs, labels = imgs.to(config.DEVICE), labels.to(config.DEVICE)
+
                 img_blur = blur_image(imgs, config.DOWN_SIZE)
                 edgeMap = ds_emse.diff_edge_map(imgs)
                 deformedEdge, tsd_grid = tsd.doTSD(edgeMap, return_grid=True)
@@ -118,6 +126,8 @@ def train_classifier(config):
                 val_correct += preds.eq(labels).sum().item()
                 val_total += labels.size(0)
 
+                # i += 1
+
         val_acc = 100. * val_correct / val_total
         print(f"[Epoch {epoch+1}] Train Acc: {train_acc:.2f}% | Val Acc: {val_acc:.2f}%")
 
@@ -126,7 +136,7 @@ def train_classifier(config):
         # Save best model
         if val_acc > best_acc:
             best_acc = val_acc
-            torch.save(cls.state_dict(), os.path.join(config.SAVE_PATH_CLS, "best_cls.pth"))
+            torch.save(cls.state_dict(), f"Result/cls_training/best_cls_{epoch}.pth")
             print(f"[Checkpoint] Saved new best model (acc={best_acc:.2f}%)")
 
 
@@ -135,7 +145,7 @@ if __name__ == "__main__":
     from utils.helpers import get_config
     import json
 
-    config = get_config("code/SDbOA/config/config.json")
+    config = get_config("config/config.json")
 
     # Add classifier-specific params
     config.IMG_SIZE = getattr(config, "image_size", 256)
