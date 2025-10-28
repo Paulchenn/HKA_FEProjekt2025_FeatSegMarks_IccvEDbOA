@@ -226,8 +226,28 @@ def get_train_val_loaders(
     class_names = set(config.CLASS_NAMES)
     if class_names is not None:
         class_to_idx = base_dataset.class_to_idx
-        selected_idx = [class_to_idx[name] for name in class_names if name in class_to_idx]
+        # selected_idx = [class_to_idx[name] for name in class_names if name in class_to_idx]
+        selected_idx = []
+        found, missing = [], []
 
+        for pos, name in enumerate(class_names):
+            if name in class_to_idx:
+                idx = class_to_idx[name]
+                selected_idx.append(idx)
+                found.append((pos, name, idx))
+            else:
+                missing.append((pos, name))
+
+        print(f"[INFO] Gefundene Klassen: {len(found)} / {len(class_names)}")
+        for pos, name, idx in found:
+            print(f"  ✔ [{pos:>2}] {name:<25} -> class_to_idx = {idx}")
+
+        if missing:
+            print(f"[WARN] Nicht gefundene Klassen: {len(missing)}")
+            for pos, name in missing:
+                print(f"  ✖ [{pos:>2}] {name}")
+
+        # pdb.set_trace()
         # Filter samples
         filtered_samples = [s for s in base_dataset.samples if s[1] in selected_idx]
 
@@ -244,6 +264,7 @@ def get_train_val_loaders(
         base_dataset.classes = list(base_dataset.class_to_idx.keys())
 
     # Split dataset
+    # pdb.set_trace()
     total_size = len(base_dataset)
     val_size = int(val_split * total_size)
     train_size = total_size - val_size
@@ -342,10 +363,10 @@ def build_image_only_loaders(config, transform_train, transform_val, pin_memory=
     # Eigene Views mit EIGENER Transform
     train_ds = ImageView(base, train_idx, transform=transform_train)
     val_ds   = ImageView(base, val_idx,   transform=transform_val)
-
+    print(getattr(config, "BATCH_SIZE", 2))
     train_loader = DataLoader(
         train_ds,
-        batch_size=getattr(config, "BATCH_SIZE", 16),
+        batch_size=getattr(config, "BATCH_SIZE", 2),
         shuffle=True,
         num_workers=getattr(config, "NUM_WORKERS", 8),
         pin_memory=pin_memory,
@@ -353,7 +374,7 @@ def build_image_only_loaders(config, transform_train, transform_val, pin_memory=
     )
     val_loader = DataLoader(
         val_ds,
-        batch_size=getattr(config, "BATCH_SIZE", 16),
+        batch_size=getattr(config, "BATCH_SIZE", 2),
         shuffle=False,
         num_workers=getattr(config, "NUM_WORKERS", 8),
         pin_memory=pin_memory,
