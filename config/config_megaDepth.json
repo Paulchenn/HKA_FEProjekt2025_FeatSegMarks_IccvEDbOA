@@ -23,13 +23,13 @@
   "use_ratio": 0.05,
   "val_ratio": 0.2,
 
-  "path_tuned_D": "f./Result/abortedTraining01__MegaDepth__DS32__TSD0_035/MegaDepth/temp_netD/netD__stage1__Epoch_020.pth",
-  "path_optim_D_stage1": "f./Result/abortedTraining01__MegaDepth__DS32__TSD0_035/MegaDepth/temp_optimD/optimD__stage1__Epoch_020.pth",
-  "path_optim_D_stage2": "f./Result/20250905_190135/ImageNet256/best_optimD/optimD__stage2__Epoch_326.pth",
+  "path_tuned_D": "f./path/to/tuned_net_D.pth",
+  "path_optim_D_stage1": "f./path/to/optim_D_stage1.pth",
+  "path_optim_D_stage2": "f./path/to/optim_D_stage2.pth",
 
-  "path_tuned_G": "f./Result/abortedTraining01__MegaDepth__DS32__TSD0_035/MegaDepth/temp_netG/netG__stage1__Epoch_020.pth",
-  "path_optim_G_stage1": "f./Result/abortedTraining01__MegaDepth__DS32__TSD0_035/MegaDepth/temp_optimG/optimG__stage1__Epoch_020.pth",
-  "path_optim_G_stage2": "f./Result/20250905_190135/ImageNet256/best_optimG/optimG__stage2__Epoch_326.pth",
+  "path_tuned_G": "f./path/to/tuned_net_G.pth",
+  "path_optim_G_stage1": "f./path/to/optim_G_stage1.pth",
+  "path_optim_G_stage2": "f./path/to/optim_G_stage2.pth",
 
   "train_with_cls": false,
 
