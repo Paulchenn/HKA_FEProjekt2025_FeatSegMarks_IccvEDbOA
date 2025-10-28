@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from torchvision import transforms
 
 # --- Dein Projekt: Imports (Generator, Config, Loader, DS_EMSE) ---
-from utils.helpers import get_config, get_train_val_loaders
-from models import generation_imageNet_V2_2 as generation_imageNet
+from utils.helpers import get_config, get_train_val_loaders, build_image_only_loaders
+from models import generation_imageNet_V2_3 as generation_imageNet
 
 # DS_EMSE ist optional – wenn Import scheitert, nutzen wir einen Sobel-Backup
 try:
@@ -210,6 +210,10 @@ def run_diagnostics(
     cfg = get_config(config_path)
     device = cfg.DEVICE
 
+    # get image sizes
+    cfg.img_h = int(getattr(cfg, "image_height", 608))
+    cfg.img_w = int(getattr(cfg, "image_width", 800))
+
     # Ausgabeverzeichnis direkt relativ zum --ckpt wählen:
     #   ./Result/<RUN_ID>/diagnostics/
     if save_dir_override:
@@ -226,15 +230,15 @@ def run_diagnostics(
 
     # Loader aufsetzen – benutze die gleichen Transforms wie im Training
     transform_train = transforms.Compose([
-        transforms.Resize(cfg.IMG_SIZE),
-        transforms.CenterCrop(cfg.IMG_SIZE),
+        transforms.Resize((cfg.img_h, cfg.img_w)),
+        transforms.CenterCrop((cfg.img_h, cfg.img_w)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
     transform_val = transforms.Compose([
-        transforms.Resize(cfg.IMG_SIZE),
-        transforms.CenterCrop(cfg.IMG_SIZE),
+        transforms.Resize((cfg.img_h, cfg.img_w)),
+        transforms.CenterCrop((cfg.img_h, cfg.img_w)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
@@ -242,18 +246,26 @@ def run_diagnostics(
     # Tilde im Pfad sicher expandieren
     data_dir = os.path.expanduser(cfg.DATASET_PATH)
 
-    train_loader, val_loader = get_train_val_loaders(
-        cfg,
-        data_dir=data_dir,
-        transform_train=transform_train,
-        transform_val=transform_val,
-        pin_memory=True
-    )
+    if getattr(cfg, "DATASET_NAME", "").lower() in {"coco20k", "megadepth"}:
+        train_loader, val_loader = build_image_only_loaders(
+            cfg,
+            transform_train=transform_train,
+            transform_val=transform_val,
+            pin_memory=True
+        )
+    else:
+        train_loader, val_loader = get_train_val_loaders(
+            cfg,
+            data_dir=data_dir,
+            transform_train=transform_train,
+            transform_val=transform_val,
+            pin_memory=True
+        )
     loader = val_loader if split == "val" else train_loader
 
 
     # Generator
-    netG = generation_imageNet.generator(img_size=cfg.IMG_SIZE, z_dim=cfg.NOISE_SIZE).to(device)
+    netG = generation_imageNet.generator(img_size=(cfg.img_h, cfg.img_w), z_dim=cfg.NOISE_SIZE).to(device)
 
     # Checkpoint laden (Stage-1-best empfohlen)
     ckpt_guess = ckpt_path or getattr(cfg, "PATH_TUNED_G", None)
